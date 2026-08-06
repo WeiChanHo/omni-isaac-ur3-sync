@@ -548,6 +548,17 @@ STALL_GOAL_TOLERANCE = 0.01
 變更所選姿勢或重新整理姿勢清單，都會使已載入的解失效，因此必須重新載入並
 再次檢查。
 
+### 動作完成判定
+
+最終執行結果以 `FollowJointTrajectory` Action server 回傳為準。只有 ROS Goal
+狀態為 `STATUS_SUCCEEDED`，且 controller 結果為 `SUCCESSFUL`，Extension 才會
+顯示動作成功。Controller 會依自身設定的 goal tolerance 判斷手臂是否到站。
+
+`/joint_states` 與 Action result 是兩條非同步訊息來源，因此 Action 完成當下的
+最新一筆 `/joint_states` 快取可能仍是到站前的樣本。Extension 不再用這筆快取
+推翻 controller 的成功結果；它仍用於執行期間的停滯偵測，以及 Action 失敗時
+顯示剩餘關節誤差。
+
 ## 疑難排解
 
 ### 沒有列出任何命名姿勢

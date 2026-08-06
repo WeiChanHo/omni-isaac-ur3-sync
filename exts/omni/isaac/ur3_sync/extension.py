@@ -1263,30 +1263,21 @@ class Ur3SyncExtension(omni.ext.IExt):
         )
         self._finish_execution_state()
 
-        # Success requires both the ROS action, controller result, and final
-        # physical feedback to agree.
+        # The trajectory controller is authoritative for final completion: it
+        # evaluates its configured goal tolerances before returning SUCCESSFUL.
+        # Do not override that result with the latest /joint_states sample.
+        # JointState and action callbacks are asynchronous, so the cached sample
+        # can still be from just before the robot entered the goal tolerance and
+        # would incorrectly turn a completed motion into an error.
         if (
             status == GoalStatus.STATUS_SUCCEEDED
             and result.error_code
             == FollowJointTrajectory.Result.SUCCESSFUL
         ):
-            if (
-                target_error is not None
-                and target_error > self.STALL_GOAL_TOLERANCE
-            ):
-                message = (
-                    f"The controller reported success for pose "
-                    f"'{pose_name}', but physical feedback remains "
-                    f"{target_error:.3f} rad from the goal. Treat the "
-                    "motion as incomplete and inspect the robot."
-                )
-                self._set_status(message, self.STATUS_ERROR)
-                self._show_motion_warning(message)
-            else:
-                self._set_status(
-                    f"Pose '{pose_name}' completed successfully.",
-                    self.STATUS_OK,
-                )
+            self._set_status(
+                f"Pose '{pose_name}' completed successfully.",
+                self.STATUS_OK,
+            )
         elif status == GoalStatus.STATUS_CANCELED:
             if stall_detected or cancel_reason == "stall":
                 details = stall_details or (
