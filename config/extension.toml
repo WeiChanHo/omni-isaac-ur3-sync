@@ -9,7 +9,6 @@ keywords = ["isaacsim", "robotics", "ros2", "ur3"]
 [dependencies]
 "omni.kit.uiapp" = {}
 "omni.kit.window.popup_dialog" = {}
-"omni.timeline" = {}
 "isaacsim.core.utils" = {}
 "omni.physx" = {}
 "isaacsim.ros2.bridge" = {}

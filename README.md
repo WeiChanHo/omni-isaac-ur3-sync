@@ -9,8 +9,8 @@ UR3。
 1. 選擇一個 Robot Poser 命名姿勢（Named Pose）。
 2. 載入並驗證其 IK 結果。
 3. 檢查六個目標關節位置。
-4. 在 Isaac Sim Timeline 停止時，預覽一次關節空間運動。
-5. 預覽完成後，按下 Timeline **Play**，啟用實機至模擬器的回授同步。
+4. 在 Timeline 持續播放時，使用獨立的規劃用 UR3 預覽一次關節空間運動。
+5. 確認實機回授用 UR3 持續同步 `/joint_states`。
 6. 確認運動內容。
 7. 將一個 `FollowJointTrajectory` 目標傳送至機器人控制器。
 
@@ -30,7 +30,8 @@ UR3。
 - 啟用實機執行前，要求從 `/joint_states` 收到 UR 六個關節的有效回授。
 - 傳送指令前顯示目標關節位置，供操作員檢查。
 - 每一次實體運動都必須經過確認。
-- Timeline 未處於 **Play** 狀態時，禁止開啟或確認實機執行。
+- Timeline 狀態不會阻止實機執行；若要讓模擬 UR3 同步顯示實機回授，
+  請在執行前將 Timeline 設為 **Play**。
 - 提供 `0.05-3.14 rad/s` 的關節速度滑桿（預設 `0.5 rad/s`），並根據最大
   關節位移自動計算軌跡時間。
 - 啟用實機執行前，要求使用目前姿勢、目標姿勢及所選速度，在 Isaac Sim
@@ -47,22 +48,20 @@ UR3。
 
 ## Timeline 操作規則
 
-預覽與實機執行階段刻意使用不同的 Timeline 狀態：
+兩支模擬手臂分工，因此 Timeline 在整個工作流程中保持 **Play**：
 
 | 階段 | Isaac Sim Timeline | 原因 |
 | --- | --- | --- |
-| 編輯 Robot Poser 目標 | **Stop** | 避免 `/joint_states` 將模擬手臂從目標姿勢拉回實機姿勢。 |
-| 在 Isaac Sim 中規劃／預覽 | **Stop** | 避免實機至模擬器的 Action Graph 覆蓋預覽軌跡。Preview 按鈕會自動停止 Timeline。 |
-| 在實體 UR3 上執行 | **Play** | 讓 Action Graph 將實機的 `/joint_states` 套用至模擬 UR3，使操作員能觀察實體手臂是否到達目標。 |
+| 編輯 Robot Poser 目標 | **Play** | Robot Poser 只操作規劃用 UR3，不會與實機回授用 UR3 衝突。 |
+| 在 Isaac Sim 中規劃／預覽 | **Play** | Extension 以應用程式更新事件推進規劃用 UR3 的預覽，不會停止 Timeline。 |
+| 在實體 UR3 上執行 | **Play** | Action Graph 將實機的 `/joint_states` 套用至實機回授用 UR3。 |
 
-Timeline **Stop** 不會停止本 Extension 內部的 ROS 2 subscriber。Extension
-仍會持續接收實機 `/joint_states`，用於計算時間與起始姿勢，以及執行停滯和
-最終位置檢查。停止的只有 Action Graph 將這些關節狀態寫入模擬 articulation
-的動作。
+Extension 內部的 ROS 2 subscriber 會持續接收實機 `/joint_states`，用於
+計算時間與起始姿勢，以及執行停滯和最終位置檢查。
 
 > [!IMPORTANT]
-> 請務必在 Timeline **Stop** 狀態下完成 Preview，再按下 Timeline
-> **Play**，然後才確認 **Execute on Physical UR3**。實機執行期間，請同時
+> 請讓 Timeline 全程保持 **Play**，並確認 Robot Poser／預覽與
+> 實機回授 Action Graph 操作不同的 UR3。實機執行期間，請同時
 > 比較模擬手臂、實體手臂、目標關節值及 Status 結果。畫面一致是有用的操作
 > 依據，但不能取代控制器結果或實體安全檢查。
 
@@ -175,15 +174,14 @@ cd /home/spatiallabs/isaacsim
 
 ### 4. 建立並執行 Mock 目標
 
-1. 按下 Timeline **Play**，讓模擬 UR3 接收 Mock `/joint_states` 數值。
-2. 編輯 Robot Poser 目標前，按下 Timeline **Stop**。
+1. 按下 Timeline **Play**，並讓 Timeline 在整個測試期間持續播放。
+2. 確認 Mock `/joint_states` 只驅動實機回授用 UR3。
 3. 依照[使用 Robot Poser 建立小幅度命名姿勢](#10-使用-robot-poser-建立小幅度命名姿勢)操作。
 4. 在 **UR3 Robot Poser Execution** 中按下 **Refresh**。
 5. 選擇命名姿勢，然後按下 **Load and Validate IK Solution**。
 6. 檢查六個目標關節值，並選擇合適的關節速度上限。
 7. 按下 **Plan / Preview Once in Isaac Sim**，觀察完整路徑。
-8. 按下 Timeline **Play**，讓模擬 UR3 在執行期間跟隨 Mock
-   `/joint_states`。
+8. 確認實機回授用 UR3 在執行期間跟隨 Mock `/joint_states`。
 9. 按下 **Execute on Physical UR3**。Mock 模式中的按鈕仍會使用此名稱，
    但目標只會傳送至 Mock controller，不會移動實體機器人。
 10. 檢查確認對話框，然後按下 **Execute**。
@@ -383,21 +381,16 @@ Extension，請確認下列檔案存在：
 1. 按下 Isaac Sim Timeline 的 **Play**。
 2. 確認模擬 UR3 移動至與實體 UR3 相同的六軸姿勢，而且沒有控制實體機器人。
 3. 檢查關節方向及大致位置是否一致。
-4. 按下 Timeline 的 **Stop**，固定模擬姿勢。
+4. 讓 Timeline 保持 **Play**。
 
-編輯 Robot Poser 目標時，Timeline 必須保持 **Stop**。Timeline 為 **Play**
-時，Action Graph 會持續將 `/joint_states` 寫入模擬 articulation；Robot Poser
-嘗試移動手臂時，Action Graph 可能會將姿勢拉回實機位置。請勿停用本
-Extension 內部的 `/joint_states` subscriber；計算實機目前位置與目標之間的
-關節位移，以及在沒有實機回授時禁止執行，都需要此 subscriber。
-
-如果按下 **Stop** 後模擬姿勢仍被拉回，請暫時停用實機至模擬器 Action Graph，
-或中斷其連接至 Articulation Controller 的輸出。建立目標後請恢復連接，且不要
-刪除該 graph。
+編輯 Robot Poser 目標時，Timeline 保持 **Play**。Action Graph 必須只將
+`/joint_states` 寫入實機回授用 UR3，Robot Poser 與本 Extension 的預覽則只
+操作規劃用 UR3。如果規劃用 UR3 被拉回實機位置，請修正 Action Graph
+的 articulation 目標，不要停止 Timeline。
 
 ### 10. 使用 Robot Poser 建立小幅度命名姿勢
 
-Timeline 保持 **Stop**：
+Timeline 保持 **Play**：
 
 1. 開啟 **Robot Poser**。
 2. 將 **Active Robot** 設為 `/World/ur3`。
@@ -422,12 +415,12 @@ Extension 顯示確認對話框，且使用者確認執行之後，實體機器�
 3. 按下 **Load and Validate IK Solution**。
 4. 確認 UI 顯示六個以弧度為單位的有限關節值。
 5. 第一次實機測試時，將 **Joint speed limit** 設為最小值 `0.05 rad/s`。
-6. 按下 **Plan / Preview Once in Isaac Sim**。Extension 會停止 Timeline，
-   避免實機至模擬器的 `/joint_states` Action Graph 覆蓋預覽。
+6. 按下 **Plan / Preview Once in Isaac Sim**。Extension 會在 Timeline 持續
+   播放時，驅動獨立的規劃用 UR3 進行預覽。
 7. 觀察從實體手臂目前關節位置移動至目標的完整過程。如果任何連桿看起來會
    穿過地面或其他場景物件，請勿執行實體運動。
-8. 預覽成功後，按下 Timeline **Play**。執行期間，實機至模擬器 Action Graph
-   必須藉此從實體 `/joint_states` 更新模擬 UR3。
+8. 確認 Timeline 仍為 **Play**，且實機回授用 UR3 仍從實體
+   `/joint_states` 持續更新。
 9. 按下 **Execute on Physical UR3** 開啟確認對話框，但先不要確認。
 10. 檢查目標關節、實機目前位置至目標的最大位移、方向及軌跡時間。
 
@@ -451,14 +444,9 @@ Pendant 速度滑桿與 UR scaled trajectory controller 可能進一步降低實
 使該次預覽核准失效。如果預覽開始後，實體手臂的任何關節移動超過
 `0.02 rad`，也會禁止實機執行。
 
-如果 Timeline 尚未開始播放，Extension 會禁止實機執行並顯示：
-
-```text
-Start the Isaac Sim Timeline before executing on the physical UR3.
-```
-
-確認對話框開啟後，Extension 會在真正送出軌跡前再次檢查 Timeline，避免操作員
-在確認過程中將 Timeline 停止。
+Timeline 未開始播放時，Extension 仍允許開啟確認對話框並送出軌跡。
+此時 Extension 仍會直接接收 ROS 2 `/joint_states` 用於執行監控，但模擬
+UR3 不會透過 Action Graph 同步顯示實機姿態。
 
 ### 12. 確認並執行實體運動
 
@@ -469,8 +457,7 @@ Start the Isaac Sim Timeline before executing on the physical UR3.
 - 六個目標角度、最大位移、時間及預期方向都正確。
 - 可立即操作 Teach Pendant 及緊急停止按鈕。
 - 沒有其他 ROS 2 node 正在傳送機器人指令。
-- Isaac Sim Timeline 為 **Play**，因此模擬 UR3 會在執行期間持續跟隨實體
-  `/joint_states`。
+- 若需要模擬畫面同步顯示實機回授，Isaac Sim Timeline 為 **Play**。
 
 只有每項檢查都通過時，才可按下 **Execute**。預期的狀態順序如下：
 
@@ -498,7 +485,7 @@ Pose 'physical_verify_small_move' completed successfully.
 
 4. 確認最終數值接近 Extension 顯示的六個目標角度。
 5. 確認沒有發生 Protective Stop 或 controller 錯誤。
-6. 編輯下一個 Robot Poser 目標前，按下 Timeline **Stop**。
+6. 編輯下一個 Robot Poser 目標時，讓 Timeline 繼續保持 **Play**。
 
 ### 14. 安全關閉
 
@@ -556,7 +543,6 @@ STALL_GOAL_TOLERANCE = 0.01
 - 儲存結果包含全部六個預期的 UR 關節名稱；
 - 每個目標關節值都是有限值；
 - 已收到完整的實體 `/joint_states` 訊息；
-- Isaac Sim Timeline 為 **Play**；
 - 軌跡 Action server 已準備就緒。
 
 變更所選姿勢或重新整理姿勢清單，都會使已載入的解失效，因此必須重新載入並

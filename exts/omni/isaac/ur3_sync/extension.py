@@ -11,7 +11,6 @@ import carb
 import omni.ext
 import omni.kit.app
 import omni.kit.window.popup_dialog
-import omni.timeline
 import omni.ui as ui
 import omni.usd
 
@@ -764,7 +763,7 @@ class Ur3SyncExtension(omni.ext.IExt):
             self.execute_btn.enabled = False
 
     def _apply_simulated_positions(self, positions):
-        """在 Timeline 停止時，以 FK 將關節狀態套用到模擬 UR3。"""
+        """以 FK 將關節狀態套用到規劃用模擬 UR3。"""
         stage = omni.usd.get_context().get_stage()
         if stage is None:
             raise RuntimeError("No active USD stage")
@@ -859,10 +858,6 @@ class Ur3SyncExtension(omni.ext.IExt):
             )
             return
 
-        timeline = omni.timeline.get_timeline_interface()
-        if timeline.is_playing():
-            timeline.stop()
-
         speed = self._get_command_speed()
         start_positions = list(self._hardware_positions)
         target_positions = list(self._pending_positions)
@@ -894,8 +889,7 @@ class Ur3SyncExtension(omni.ext.IExt):
 
         self._set_status(
             f"Previewing pose '{self._pending_pose_name}' in Isaac Sim "
-            f"for {duration:.2f} s. Timeline was stopped to prevent "
-            "/joint_states from overwriting the preview.",
+            f"for {duration:.2f} s while the Timeline keeps playing.",
             self.STATUS_INFO,
         )
 
@@ -991,19 +985,6 @@ class Ur3SyncExtension(omni.ext.IExt):
     # 確認與軌跡執行
     # ------------------------------------------------------------------
 
-    def _require_timeline_playing_for_execution(self):
-        """實機軌跡送出前，要求 Isaac Sim Timeline 正在播放。"""
-        timeline = omni.timeline.get_timeline_interface()
-        if timeline.is_playing():
-            return True
-
-        self._set_status(
-            "Start the Isaac Sim Timeline before executing on the physical "
-            "UR3.",
-            self.STATUS_ERROR,
-        )
-        return False
-
     def _on_execute_clicked(self):
         """檢查執行前提，並要求使用者確認。"""
         if self._is_previewing:
@@ -1017,9 +998,6 @@ class Ur3SyncExtension(omni.ext.IExt):
                 "A trajectory is already executing.",
                 self.STATUS_WARN,
             )
-            return
-
-        if not self._require_timeline_playing_for_execution():
             return
 
         if (
@@ -1178,11 +1156,6 @@ class Ur3SyncExtension(omni.ext.IExt):
         pose_name,
     ):
         """建立並非同步傳送一個單點軌跡目標。"""
-        # Recheck after confirmation in case the Timeline was stopped while
-        # the physical-motion confirmation dialog was open.
-        if not self._require_timeline_playing_for_execution():
-            return
-
         # The server may become unavailable while the dialog is open.
         if self.client is None or not self.client.server_is_ready():
             self._set_status(
@@ -1463,7 +1436,6 @@ class Ur3SyncExtension(omni.ext.IExt):
 
         if self._is_previewing:
             self._cancel_preview(restore_start=True)
-
         # Best-effort cancellation reduces the risk of unmanaged motion.
         if self._goal_handle is not None:
             carb.log_warn(
