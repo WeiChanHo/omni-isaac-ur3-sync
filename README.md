@@ -1,80 +1,143 @@
-# UR3 Robot Poser 執行器
+# UR3 Robot Poser Executor
 
-這是一個 Isaac Sim Extension，用來驗證 Robot Poser 已儲存的逆向運動學
-（Inverse Kinematics，IK）解，並透過 ROS 2 將其傳送至實體 Universal Robots
-UR3。
+`omni.isaac.ur3_sync` 是一個 NVIDIA Isaac Sim Extension。它會讀取 Robot
+Poser 已儲存的 Named Pose，驗證其中的六軸 IK 關節角，然後透過 ROS 2
+`FollowJointTrajectory` Action 將**一個單點軌跡目標**傳送給 Universal Robots
+UR3 的 trajectory controller。
 
-本 Extension 採用需要操作員監督的謹慎流程：
-
-1. 選擇一個 Robot Poser 命名姿勢（Named Pose）。
-2. 載入並驗證其 IK 結果。
-3. 檢查六個目標關節位置。
-4. 確認實機回授用 UR3 持續同步 `/joint_states`。
-5. 確認運動內容。
-6. 將一個 `FollowJointTrajectory` 目標傳送至機器人控制器。
-
-本 Extension **不會**將 Isaac Sim 的關節位置持續鏡像或串流至實體機器人。
+目前 Extension 版本為 `1.3.2`。
 
 > [!WARNING]
-> 本 Extension 會控制實體硬體。測試時請降低速度、清空機器人的完整工作空間，
-> 並確保可立即操作緊急停止按鈕。實機執行期間，介面中的
-> **Cancel Goal** 按鈕只會提出 ROS 2 Action 取消要求；它不是
-> 通過安全認證的停止裝置，也不能取代機器人的實體緊急停止按鈕。
+> 這個 Extension 可以控制實體機器人，但它不是安全控制器。`Cancel Goal`
+> 只會送出 ROS 2 Action 取消要求，不能取代 Teach Pendant、實體緊急停止按鈕、
+> 安全圍籬或實驗室 SOP。第一次執行請使用 Mock Hardware；實機測試時請清空完整
+> 工作空間、降低速度，並確保操作員可立即停止機器人。
 
-## 功能
+## 目前程式實際做什麼
 
-- 尋找 Isaac Sim Robot Poser Extension 儲存的命名姿勢。
-- 在姿勢選擇器下方直接顯示目前選擇的命名姿勢。
-- 拒絕遺失、失敗、不完整、NaN 或無限值的 IK 結果。
-- 啟用實機執行前，要求從 `/joint_states` 收到 UR 六個關節的有效回授。
-- 按下 Execute 並通過前置檢查後立即傳送目標，不顯示二次確認視窗。
-- Timeline 狀態不會阻止實機執行；若要讓模擬 UR3 同步顯示實機回授，
-  請在執行前將 Timeline 設為 **Play**。
-- 提供 `0.05-3.14 rad/s` 的關節速度滑桿（預設 `0.5 rad/s`），並根據最大
-  關節位移自動計算軌跡時間。
-- 執行期間監控實體關節回授。如果尚未到達目標便停止移動，會顯示警告
-  對話框並自動要求取消軌跡。
-- 軌跡控制器中止或執行失敗時，也會顯示相同的警告。
-- 顯示目標接受、完成、取消及控制器錯誤狀態。
+1. 啟動一個名為 `isaacsim_ur3_sync_extension` 的 ROS 2 node。
+2. 訂閱 `/joint_states`，依固定的 UR3 關節順序快取最近一筆完整且有限的關節角。
+3. 從目前開啟的 USD Stage 取得 `/World/ur3` 上的 Robot Poser Named Poses。
+4. 載入使用者選擇的 Named Pose，確認 IK 成功、六個關節完整且數值有限。
+5. 以目前實機關節角、目標關節角與使用者速度上限計算軌跡時間。
+6. 將一個 `FollowJointTrajectory` goal 非同步傳送到
+   `/scaled_joint_trajectory_controller/follow_joint_trajectory`。
+7. 以 Action result 判定成功、取消或失敗；執行中則用 `/joint_states` 偵測疑似
+   停滯，必要時顯示警告並自動要求取消。
 
-## Timeline 操作規則
+### 目前不做的事
 
-兩支模擬手臂分工，因此 Timeline 在整個工作流程中保持 **Play**：
+- 不計算 IK；IK 由 Isaac Sim Robot Poser 完成。
+- 不直接讀取模擬 articulation 的「目前姿勢」作為目標。
+- 不做 live streaming，也不持續把模擬關節值發布給實體 UR3。
+- 不產生多點路徑、不提供 Plan Preview，也不保證 controller 的實際插值路徑。
+- 不做碰撞檢查、路徑規劃、完整關節限制驗證或速度／加速度安全認證。
+- 不要求 Isaac Sim Timeline 必須為 Play，且不會自行啟動或停止 Timeline。
+- 按下 **Execute on Physical UR3** 並通過程式前置檢查後會立即送出 goal，沒有二次
+  確認視窗。
 
-| 階段 | Isaac Sim Timeline | 原因 |
+## 系統架構
+
+下圖同時標示 repository 內的模組與外部執行元件。實線是 Extension 本身的資料
+路徑；虛線是場景中可選、但不由 `extension.py` 建立或控制的視覺同步路徑。
+
+```mermaid
+flowchart LR
+    Operator["操作員"] --> UI["omni.ui 視窗"]
+
+    subgraph Repo["omni.isaac.ur3_sync repository"]
+        Manifest["config/extension.toml<br/>套件資訊與依賴"]
+        Init["__init__.py<br/>匯出 Extension class"]
+        Ext["extension.py<br/>Ur3SyncExtension"]
+        Scene["scenes/real2sim_ur3_dev.usd<br/>開發場景資產"]
+        Manifest --> Init --> Ext
+    end
+
+    RobotPoser["Isaac Sim Robot Poser<br/>求解並儲存 Named Pose"] --> Stage["目前開啟的 USD Stage<br/>/World/ur3"]
+    Scene -.->|"可由使用者開啟；不會自動載入"| Stage
+    Stage -->|"Named Pose / joint prim paths"| Ext
+    UI -->|"Refresh / Load / Execute / Cancel"| Ext
+    Ext -->|"狀態與按鈕啟用狀態"| UI
+
+    Kit["Isaac Sim app update event"] -->|"每個 update 呼叫 spin_once"| Ext
+    Ext --> Node["rclpy node"]
+    Driver["UR ROS 2 driver"] -->|"/joint_states"| Node
+    Node -->|"排序後的六軸回授"| Cache["硬體位置快取與 stall watchdog"]
+    Cache --> Ext
+    Ext -->|"FollowJointTrajectory goal / cancel"| Controller["scaled_joint_trajectory_controller"]
+    Controller -->|"goal response / result"| Ext
+    Controller --> Robot["Mock 或實體 UR3"]
+    Robot --> Driver
+
+    Driver -.->|"/joint_states"| Graph["場景中的 ROS 2 Action Graph（可選）"]
+    Graph -.->|"只負責畫面同步"| FeedbackArm["實機回授用模擬 UR3"]
+```
+
+### Repository 模組責任
+
+| 模組 | 責任 | 與其他模組的互動 |
 | --- | --- | --- |
-| 編輯 Robot Poser 目標 | **Play** | Robot Poser 只操作規劃用 UR3，不會與實機回授用 UR3 衝突。 |
-| 在實體 UR3 上執行 | **Play** | Action Graph 將實機的 `/joint_states` 套用至實機回授用 UR3。 |
+| `config/extension.toml` | 定義 Extension ID、名稱、版本、Python module path 與 Isaac Sim dependencies | Isaac Sim Extension Manager 讀取後載入 `omni.isaac.ur3_sync` |
+| `exts/omni/isaac/ur3_sync/__init__.py` | 重新匯出 `extension.py` 的內容 | 讓 Kit 找到 `Ur3SyncExtension` |
+| `exts/omni/isaac/ur3_sync/extension.py` | UI、Robot Poser 資料驗證、ROS 2 node、Action client、取消與 stall watchdog | 讀取目前 Stage，接收 `/joint_states`，呼叫 controller Action |
+| `scenes/real2sim_ur3_dev.usd` | 開發用 USD 場景／覆寫層 | 程式不會自動開啟它；Extension 一律操作使用者目前已開啟 Stage 的 `/World/ur3` |
+| `feedback/` | UR3 datasheet 與開發回饋 | 不會在 runtime 載入；datasheet 是目前速度上限註解的依據 |
+| `weekly_report_0801/` | 歷史報告與畫面 | 不參與 runtime，內容可能早於目前實作 |
 
-Extension 內部的 ROS 2 subscriber 會持續接收實機 `/joint_states`，用於
-計算軌跡時間，以及執行停滯和最終位置檢查。
+雖然 `extension.py` 是單一檔案，`Ur3SyncExtension` 內部仍可分為五個責任區：
 
-> [!IMPORTANT]
-> 請讓 Timeline 全程保持 **Play**，並確認 Robot Poser 與
-> 實機回授 Action Graph 操作不同的 UR3。實機執行期間，請同時
-> 比較模擬手臂、實體手臂、目標關節值及 Status 結果。畫面一致是有用的操作
-> 依據，但不能取代控制器結果或實體安全檢查。
+| 區域 | 主要方法 |
+| --- | --- |
+| 生命週期與 ROS 初始化 | `on_startup`、`_initialize_ros`、`on_shutdown` |
+| ROS 回授與 Kit event pump | `_on_joint_state`、`_on_app_update` |
+| UI 與 Named Pose 選擇 | `_build_ui`、`_refresh_pose_names`、`_on_pose_selection_changed` |
+| IK 結果載入與驗證 | `_load_named_pose_positions`、`_on_load_clicked` |
+| 軌跡 Action 與監控 | `_on_execute_clicked`、`_send_trajectory_goal`、goal/result/cancel callbacks、stall watchdog |
 
-## 需求
+## 啟動與事件迴圈
 
-- NVIDIA Isaac Sim，並可使用下列 Extension：
-  - `isaacsim.robot.poser`
-  - `isaacsim.ros2.bridge`
-  - `isaacsim.core.utils`
-- 與目前 Isaac Sim 版本相容的 ROS 2 環境。
-- 提供下列套件的 ROS 2 message：
-  - `action_msgs`
-  - `control_msgs`
-  - `sensor_msgs`
-  - `trajectory_msgs`
-- 正在執行的 UR ROS 2 driver 與 controller，且必須：
-  - 在 `/joint_states` 發布 `sensor_msgs/msg/JointState`；
-  - 將 `/scaled_joint_trajectory_controller/follow_joint_trajectory` 公開為
-    `control_msgs/action/FollowJointTrajectory` Action。
-- 目前 USD Stage 中的 `/World/ur3` 必須是一個 UR3 articulation。
-- Robot Poser 必須已為該 articulation 儲存至少一個有效命名姿勢。
+Extension 沒有另外建立 ROS spin thread。它訂閱 Isaac Sim 的 app update event，並在
+每次更新中執行一次非阻塞的 `rclpy.spin_once(..., timeout_sec=0.0)`。因此 UI、
+`/joint_states` callback、Action callback 與 stall watchdog 都由 Isaac Sim 的更新
+節奏向前推進。
 
-預期的 UR 關節名稱如下：
+```mermaid
+sequenceDiagram
+    participant Kit as Isaac Sim / Kit
+    participant Ext as Ur3SyncExtension
+    participant ROS as rclpy node
+    participant UI as omni.ui
+    participant Stage as Current USD Stage
+
+    Kit->>Ext: on_startup(ext_id)
+    Ext->>ROS: rclpy.init()（若尚未初始化）
+    Ext->>ROS: create_node()
+    Ext->>ROS: 建立 ActionClient 與 /joint_states subscription
+    Ext->>Kit: 訂閱 app update event
+    Ext->>UI: 建立 UR3 Robot Poser Execution 視窗
+    Ext->>Stage: 尋找 /World/ur3 與 Named Poses
+
+    loop 每個 Isaac Sim app update
+        Kit->>Ext: _on_app_update(event)
+        Ext->>ROS: spin_once(timeout_sec=0.0)
+        ROS-->>Ext: JointState / Action callbacks（若有）
+        Ext->>Ext: 處理回呼並推進 stall watchdog
+        Ext-->>UI: 更新 Status（狀態改變時）
+    end
+
+    Kit->>Ext: on_shutdown()
+    Ext->>ROS: best-effort cancel active goal
+    Ext->>UI: destroy window
+    Ext->>ROS: destroy ActionClient 與 node
+```
+
+如果 ROS 初始化失敗，`on_startup` 會直接返回，不建立 UI，也不訂閱 app update。
+`on_shutdown` 會銷毀此 Extension 建立的 node，但不會呼叫全域 `rclpy.shutdown()`。
+
+## Named Pose 載入與驗證
+
+Robot Poser 將關節值儲存為「joint prim path → value」。controller 則要求固定的
+關節名稱順序，所以 Extension 會先取得每個 joint prim 的名稱，再重新排列為：
 
 ```text
 shoulder_pan_joint
@@ -85,202 +148,182 @@ wrist_2_joint
 wrist_3_joint
 ```
 
-## 替代方案：使用 Mock Hardware 測試
+```mermaid
+flowchart TD
+    Refresh["Refresh 或 Extension 啟動"] --> Invalidate["清除已驗證目標並停用 Execute"]
+    Invalidate --> HasStage{"目前有 USD Stage？"}
+    HasStage -- 否 --> StageError["Status: No active USD stage"]
+    HasStage -- 是 --> HasPrim{"/World/ur3 是有效 prim？"}
+    HasPrim -- 否 --> PrimError["Status: Robot prim not found"]
+    HasPrim -- 是 --> List["list_named_poses<br/>排序後更新下拉選單"]
+    List --> Select["操作員選擇 Named Pose"]
+    Select --> InvalidateAgain["選項變更會再次使舊目標失效"]
+    InvalidateAgain --> Load["Load and Validate IK Solution"]
+    Load --> Pose["get_named_pose"]
+    Pose --> Checks{"Pose 存在且 success？<br/>六個關節完整？<br/>所有值有限？"}
+    Checks -- 否 --> Reject["顯示原因並保持 Execute disabled"]
+    Checks -- 是 --> Normalize["依 controller 關節順序建立 positions[6]"]
+    Normalize --> Pending["儲存 _pending_pose_name<br/>與 _pending_positions"]
+    Pending --> Review["顯示六個 rad 目標值並啟用 Execute"]
+```
 
-使用 UR driver 的 Mock Hardware 模式，可以在不連接或移動實體 UR3 的情況下
-測試本 Extension。Mock 模式會測試 ROS 2 關節回授、軌跡控制器、Robot Poser
-驗證、確認、執行及取消功能，但不會驗證機器人網路、Teach Pendant 的
-External Control、實體運動或真實環境安全。
+會阻擋載入的條件包括：Stage 不存在、`/World/ur3` 不存在、Named Pose 不存在、
+`pose.success == False`、遺失任一預期關節，或數值含 `NaN`／無限大。切換 Pose 或
+按下 Refresh 都會清除已載入的目標，避免誤送舊資料。
+
+## 軌跡計算與執行
+
+速度滑桿範圍是 `0.05–π rad/s`，預設 `0.5 rad/s`。共同上限取 UR3 六個額定
+關節速度中的最小值，也就是 arm joints 的 `180°/s`。
+
+Extension 以六個關節中最大的角度差計算單點軌跡時間：
+
+```text
+max_delta = max(abs(target[i] - current[i]))
+duration  = max(0.1 s, max_delta / selected_speed)
+```
+
+這只限制「最大位移 ÷ 指定時間」的平均值；實際插值、加速度、容許誤差與速度
+縮放仍由 UR controller 決定。
+
+```mermaid
+sequenceDiagram
+    actor User as 操作員
+    participant Ext as Ur3SyncExtension
+    participant Cache as /joint_states cache
+    participant AC as ROS 2 ActionClient
+    participant Ctrl as UR trajectory controller
+    participant Robot as Mock / Physical UR3
+
+    User->>Ext: Execute on Physical UR3
+    Ext->>Ext: 確認未在執行且有 pending pose
+    Ext->>Cache: 讀取最近一筆完整六軸位置
+    Ext->>AC: 確認 Action server ready
+    Ext->>Ext: 計算 max_delta 與 duration
+    Ext->>AC: send_goal_async(單點 trajectory)
+    AC->>Ctrl: FollowJointTrajectory goal
+    Ctrl-->>Ext: goal accepted / rejected
+
+    alt goal rejected 或 request exception
+        Ext-->>User: 顯示錯誤並恢復控制項
+    else goal accepted
+        Ext->>Ext: 啟動 stall watchdog
+        Ext-->>User: 啟用 Cancel Goal
+        Ctrl->>Robot: 執行 controller 規劃的運動
+        Robot-->>Cache: /joint_states 回授
+        Ctrl-->>Ext: final Action result
+
+        alt STATUS_SUCCEEDED 且 error_code == SUCCESSFUL
+            Ext-->>User: completed successfully
+        else STATUS_CANCELED
+            Ext-->>User: user cancel 或 suspected stall cancel
+        else aborted / failed / result exception
+            Ext-->>User: 顯示錯誤與模態警告
+        end
+    end
+```
+
+### 執行狀態機
+
+```mermaid
+stateDiagram-v2
+    [*] --> NoPose: startup / refresh
+    NoPose --> PoseReady: IK 驗證成功
+    PoseReady --> NoPose: refresh 或切換 pose
+    PoseReady --> Sending: Execute 且有硬體快取、server ready
+    Sending --> PoseReady: request exception 或 goal rejected
+    Sending --> Executing: goal accepted
+    Executing --> Cancelling: Cancel Goal
+    Executing --> Cancelling: stall watchdog 觸發
+    Cancelling --> Executing: controller 不接受 cancel
+    Executing --> PoseReady: succeeded / aborted / failed
+    Cancelling --> PoseReady: final canceled result
+    PoseReady --> [*]: shutdown
+    Executing --> [*]: shutdown 時 best-effort cancel
+```
+
+成功狀態只以 Action server 的最終結果為準：
+
+```text
+response.status == GoalStatus.STATUS_SUCCEEDED
+and result.error_code == FollowJointTrajectory.Result.SUCCESSFUL
+```
+
+程式刻意不使用同一時間的 `/joint_states` 快取推翻 controller 的成功結果，因為
+JointState 與 Action result 是非同步回呼，最新快取可能仍是進入 goal tolerance
+之前的樣本。若 Action 失敗，Status 會額外顯示目前回授到目標的最大關節誤差。
+
+## Stall watchdog
+
+goal 被接受後，watchdog 會監看六軸回授：
+
+- 啟動寬限：`1.0 s`
+- 距離目標的容許值：`0.01 rad`（最大關節誤差）
+- 視為有移動的門檻：`0.002 rad`
+- 無有效移動逾時：`3.0 s`
+
+若手臂尚未進入 `0.01 rad` 範圍，且連續三秒沒有任何關節產生至少
+`0.002 rad` 的變化，Extension 會標記疑似 stall、顯示警告並呼叫
+`cancel_goal_async()`。
+
+這是回授進度偵測，不是碰撞偵測器。Protective Stop、Teach Pendant 速度滑桿為
+零、controller fault、過慢的速度縮放或 `/joint_states` 中斷都可能產生相同結果。
 
 > [!IMPORTANT]
-> 請勿同時執行 Mock driver 與實體 UR driver。開始實機測試前，必須先在
-> Mock driver 終端機中按下 `Ctrl+C` 停止它。
+> 目前程式只快取「最近一次有效樣本」，沒有儲存訊息時間或檢查資料新鮮度。
+> 因此 Execute 的程式檢查代表「Extension 啟動後曾收到一筆有效
+> `/joint_states`」，不等於 topic 此刻仍持續更新。執行前仍必須用 ROS 2 工具與
+> 畫面確認 driver 正在發布。
 
-### 1. 啟動 Mock UR3 driver
+## ROS 2 與 Stage 契約
 
-在**終端機 1** 中載入 ROS 2，並設定與 Isaac Sim 相同的 `ROS_DOMAIN_ID`。
-如果實驗室使用其他 Domain ID，請替換下列 `0`。
+### 固定介面
 
-```bash
-conda deactivate 2>/dev/null || true
-source /opt/ros/jazzy/setup.bash
-export ROS_DOMAIN_ID=0
-ros2 launch ur_robot_driver ur_control.launch.py \
-  ur_type:=ur3 \
-  robot_ip:=192.168.56.101 \
-  launch_rviz:=true \
-  use_mock_hardware:=true
-```
-
-讓此終端機保持執行。Mock 模式不需要開啟 UR3 電源，也不需要啟動 Teach
-Pendant 的 External Control 程式。
-
-### 2. 驗證 Mock ROS 2 介面
-
-在**終端機 2** 使用相同的 ROS Domain：
-
-```bash
-conda deactivate 2>/dev/null || true
-source /opt/ros/jazzy/setup.bash
-export ROS_DOMAIN_ID=0
-```
-
-確認可以取得 Mock 關節回授：
-
-```bash
-ros2 topic echo /joint_states --once
-```
-
-確認 `scaled_joint_trajectory_controller` 為 `active`：
-
-```bash
-ros2 service call \
-  /controller_manager/list_controllers \
-  controller_manager_msgs/srv/ListControllers \
-  "{}"
-```
-
-確認預期的軌跡 Action 有對應的 Action server：
-
-```bash
-ros2 action info \
-  /scaled_joint_trajectory_controller/follow_joint_trajectory
-```
-
-### 3. 啟動 Isaac Sim 並啟用 Extension
-
-在**終端機 3**，使用相同 ROS Domain 啟動 Isaac Sim：
-
-```bash
-conda deactivate 2>/dev/null || true
-source /opt/ros/jazzy/setup.bash
-export ROS_DOMAIN_ID=0
-cd /home/spatiallabs/isaacsim
-./isaac-sim.sh
-```
-
-接著依照[在 Isaac Sim 中安裝並啟用 Extension](#7-在-isaac-sim-中安裝並啟用-extension)
-及[開啟並檢查 UR3 場景](#8-開啟並檢查-ur3-場景)操作。
-
-### 4. 建立並執行 Mock 目標
-
-1. 按下 Timeline **Play**，並讓 Timeline 在整個測試期間持續播放。
-2. 確認 Mock `/joint_states` 只驅動實機回授用 UR3。
-3. 依照[使用 Robot Poser 建立小幅度命名姿勢](#10-使用-robot-poser-建立小幅度命名姿勢)操作。
-4. 在 **UR3 Robot Poser Execution** 中按下 **Refresh**。
-5. 選擇命名姿勢，然後按下 **Load and Validate IK Solution**。
-6. 檢查六個目標關節值，並選擇合適的關節速度上限。
-7. 確認實機回授用 UR3 在執行期間跟隨 Mock `/joint_states`。
-8. 按下 **Execute on Physical UR3**。Mock 模式中的按鈕仍會使用此名稱，
-   但目標只會傳送至 Mock controller，不會移動實體機器人。按下後會
-   立即送出，不會另外顯示確認視窗。
-9. 確認 Status 依序顯示目標正在送出、已接受與成功完成。
-
-### 5. 驗證 Mock 結果並停止 driver
-
-在終端機 2 中讀取更新後的 Mock 關節位置：
-
-```bash
-ros2 topic echo /joint_states --once
-```
-
-最終數值應接近 Extension 顯示的目標值。也可以使用時間較長的目標，測試
-**Cancel Goal**。測試完成後，關閉 Isaac Sim，並在終端機 1
-中按下 `Ctrl+C` 停止 Mock driver。
-
-## 逐步操作：搭配實體 UR3 執行
-
-本流程依照目前工作站的設定撰寫：
-
-| 項目 | 值 |
+| 項目 | 目前值 |
 | --- | --- |
-| ROS 2 | Jazzy |
-| Isaac Sim 啟動程式 | `/home/spatiallabs/isaacsim/isaac-sim.sh` |
-| Extension repository | `/home/spatiallabs/Desktop/omni.isaac.ur3_sync` |
-| UR3 場景 | `/home/spatiallabs/Desktop/ur3_arm_ik_solver/ur3_arm_handoff/sim/Collected_real2sim_ur3/real2sim_ur3.usd` |
-| UR3 IP 位址 | `192.168.56.101` |
+| ROS node | `isaacsim_ur3_sync_extension` |
 | Robot prim | `/World/ur3` |
+| JointState topic | `/joint_states` |
+| Trajectory Action | `/scaled_joint_trajectory_controller/follow_joint_trajectory` |
+| Subscription queue depth | `10` |
+| 最小／最大速度 | `0.05` / `π rad/s` |
+| 預設速度 | `0.5 rad/s` |
+| 最短 trajectory duration | `0.1 s` |
 
-操作過程中需使用三個終端機：
+這些路徑與數值目前是 `Ur3SyncExtension` 的 class constants，不是 UI 或 TOML
+設定。如果 ROS namespace、controller 名稱或 prim path 不同，需修改
+`extension.py` 後重新載入 Extension。
 
-| 終端機 | 用途 |
-| --- | --- |
-| 1 | 執行實體 UR driver |
-| 2 | 檢查 ROS 2 topic、controller 及 Action |
-| 3 | 在 ROS 2 環境中啟動 Isaac Sim |
+### Extension dependencies
 
-### 1. 完成實體安全檢查
+`config/extension.toml` 宣告：
 
-開啟手臂電源或傳送指令前：
+- `omni.kit.uiapp`
+- `omni.kit.window.popup_dialog`
+- `isaacsim.core.utils`
+- `omni.physx`
+- `isaacsim.ros2.bridge`
+- `isaacsim.robot.poser`
 
-- 清除機器人完整工作空間內的人員、工具、電纜及其他障礙物。
-- 在 Teach Pendant 上確認 payload 及 TCP（Tool Center Point）設定。
-- 確保可立即操作 Teach Pendant 與實體緊急停止按鈕。
-- 根據實驗室 SOP 設定 Teach Pendant 速度滑桿。第一次有人監督的測試請從
-  `5-10%` 開始。
-- 停止所有 Mock driver，以及其他所有可能控制 UR3 的程式。
-- 第一個目標只能使用小幅度位移，並遠離關節限制、桌面、人員及障礙物。
+Python runtime 還會匯入 ROS 2 的 `rclpy`、`action_msgs`、`control_msgs`、
+`sensor_msgs` 與 `trajectory_msgs`。
 
-> [!CAUTION]
-> 本 Extension 不會執行碰撞檢查、完整關節限制檢查或無碰撞路徑規劃，
-> 也不提供通過安全認證的停止功能。執行本實機流程前，必須先完成 Mock Hardware
-> 測試。
+### Stage 前提
 
-### 2. 所有終端機使用相同的 ROS Domain
+- 使用者必須先開啟一個 USD Stage。
+- Stage 必須包含有效 prim `/World/ur3`。
+- Robot Poser 必須已在該 prim 儲存至少一個成功的 Named Pose。
+- Named Pose 的 joint prim 名稱必須符合固定的六個 UR3 關節名稱。
 
-Isaac Sim、UR driver 及所有診斷終端機都必須使用相同的 `ROS_DOMAIN_ID`。
-每次開啟新終端機時，執行下列設定。如果實驗室使用不同 Domain ID，請替換
-`0`。
+Repository 內的 `scenes/real2sim_ur3_dev.usd` 是開發資產，不會由 Extension 自動
+開啟。它若引用其他本機 USD／資產，開啟時也必須確保那些相依路徑可以解析。
 
-```bash
-conda deactivate 2>/dev/null || true
-source /opt/ros/jazzy/setup.bash
-export ROS_DOMAIN_ID=0
-echo "ROS_DISTRO=$ROS_DISTRO"
-echo "ROS_DOMAIN_ID=$ROS_DOMAIN_ID"
-```
+## 安裝與啟動
 
-如果不同終端機顯示的 Domain ID 不同，請勿繼續。
+### 1. 準備 ROS 2
 
-### 3. 開啟 UR3 電源並完成準備
-
-在 UR3 Teach Pendant 上：
-
-1. 根據實驗室程序開啟控制器及機器人電源。
-2. 解除煞車，並確認機器人顯示正常運作狀態。
-3. 確認設定的 payload、TCP 及低速滑桿設定。
-4. 載入 URCap **External Control** 程式，但請先依照下一個步驟啟動 ROS 2
-   driver，再執行該程式。
-
-如果機器人顯示 Protective Stop 或其他安全錯誤，請先依照 UR 及實驗室程序
-解決問題，再繼續操作。
-
-### 4. 啟動實體 UR ROS 2 driver
-
-在**終端機 1** 中，先確認工作站能夠連線至機器人：
-
-```bash
-ping -c 3 192.168.56.101
-```
-
-接著啟動 driver：
-
-```bash
-conda deactivate 2>/dev/null || true
-source /opt/ros/jazzy/setup.bash
-export ROS_DOMAIN_ID=0
-ros2 launch ur_robot_driver ur_control.launch.py \
-  ur_type:=ur3 \
-  robot_ip:=192.168.56.101 \
-  launch_rviz:=false
-```
-
-讓此終端機保持執行。Driver 準備完成後，從 Teach Pendant 執行
-**External Control** 程式。請勿同時執行 Mock driver。
-
-### 5. 驗證機器人的 ROS 2 介面
-
-在**終端機 2** 載入相同的 ROS 環境：
+Isaac Sim、UR driver 與診斷終端機必須使用相同的 `ROS_DOMAIN_ID`。以下以 ROS 2
+Jazzy 與 Domain `0` 為例：
 
 ```bash
 conda deactivate 2>/dev/null || true
@@ -288,300 +331,122 @@ source /opt/ros/jazzy/setup.bash
 export ROS_DOMAIN_ID=0
 ```
 
-讀取一則實體關節狀態訊息：
+先啟動 UR driver；初次測試建議使用 `use_mock_hardware:=true`。同一個 ROS domain
+不要同時啟動 Mock driver 與實體 driver。
+
+### 2. 從相同 ROS 環境啟動 Isaac Sim
 
 ```bash
-ros2 topic echo /joint_states --once
-```
-
-訊息必須包含全部六個預期 UR3 關節的有限位置值。接著檢查 controller：
-
-```bash
-ros2 service call \
-  /controller_manager/list_controllers \
-  controller_manager_msgs/srv/ListControllers \
-  "{}"
-```
-
-確認 `scaled_joint_trajectory_controller` 為 `active`。最後檢查軌跡 Action：
-
-```bash
-ros2 action info \
-  /scaled_joint_trajectory_controller/follow_joint_trajectory
-```
-
-輸出內容必須顯示存在一個 Action server。若任一檢查失敗，請在此停止，並修正
-driver、controller、網路、External Control 程式或 ROS Domain。
-
-### 6. 從 ROS 2 環境啟動 Isaac Sim
-
-在**終端機 3** 使用相同的 Domain ID 啟動 Isaac Sim：
-
-```bash
-conda deactivate 2>/dev/null || true
-source /opt/ros/jazzy/setup.bash
-export ROS_DOMAIN_ID=0
 cd /home/spatiallabs/isaacsim
 ./isaac-sim.sh
 ```
 
-必須從此終端機啟動 Isaac Sim，因為 Extension 會匯入 `rclpy`，而且必須能在
-ROS 2 graph 中找到 UR driver。
+### 3. 註冊 Extension
 
-### 7. 在 Isaac Sim 中安裝並啟用 Extension
+1. 開啟 **Window → Extensions**。
+2. 在 Extension Manager 設定中加入包含此 repository 的 Extension Search Path；
+   目前工作站可使用 `/home/spatiallabs/Desktop`。
+3. 確認 `isaacsim.ros2.bridge` 與 `isaacsim.robot.poser` 可用。
+4. 啟用 **UR3 Robot Poser Executor**（ID：`omni.isaac.ur3_sync`）。
 
-通常只需要執行一次此設定：
+成功後會顯示 **UR3 Robot Poser Execution** 視窗。若 ROS 初始化失敗，程式只會
+寫入 Isaac Sim log，不會建立該視窗。
 
-1. 開啟 **Window -> Extensions**。
-2. 開啟 Extension Manager 設定。
-3. 將 `/home/spatiallabs/Desktop` 加入 **Extension Search Paths**。這是
-   `omni.isaac.ur3_sync` repository 的上層目錄。
-4. 重新整理 Extension 清單。
-5. 啟用 `isaacsim.ros2.bridge`。
-6. 如果 `isaacsim.robot.poser` 與 `isaacsim.robot.poser.ui` 分開顯示，請將
-   兩者都啟用。
-7. 找到 **UR3 Robot Poser Executor**（`omni.isaac.ur3_sync`）並啟用。
+## 建議操作流程
 
-啟用 Extension 後，會開啟 **UR3 Robot Poser Execution** 視窗，並啟動
-ROS 2 node `isaacsim_ur3_sync_extension`。如果清單中沒有顯示此自訂
-Extension，請確認下列檔案存在：
+### Mock Hardware
 
-```text
-/home/spatiallabs/Desktop/omni.isaac.ur3_sync/config/extension.toml
-```
+1. 啟動 UR driver 的 Mock Hardware，確認 controller 為 active。
+2. 從相同 ROS domain 啟動 Isaac Sim 並開啟包含 `/World/ur3` 的 Stage。
+3. 在 Robot Poser 求解一個小幅度目標並儲存為 Named Pose。
+4. 在 Extension 按 **Refresh**，選取 Pose，按 **Load and Validate IK Solution**。
+5. 檢查畫面上的六個弧度值，將速度設為保守值。
+6. 確認 `/joint_states` 與 Action server 正常後按 **Execute on Physical UR3**。
+7. 確認 Status 依序出現 sending、accepted、completed；再以 `/joint_states`
+   比較最終位置。
 
-### 8. 開啟並檢查 UR3 場景
+### 實體 UR3
 
-在 Isaac Sim 中：
-
-1. 選擇 **File -> Open**。
-2. 開啟
-   `/home/spatiallabs/Desktop/ur3_arm_ik_solver/ur3_arm_handoff/sim/Collected_real2sim_ur3/real2sim_ur3.usd`。
-3. 確認 Stage 包含 articulation `/World/ur3`。
-4. 確認 Extension 視窗顯示 `Robot: /World/ur3`。
-5. 確認場景中的實機至模擬器 Action Graph 訂閱 `/joint_states`，且目標為
-   `/World/ur3`。
-
-如果不希望將姿勢變更寫入收集完成的 handoff 場景，請使用 **File -> Save As**
-建立工作副本。
-
-### 9. 將目前實體姿勢同步至 Isaac Sim
-
-1. 按下 Isaac Sim Timeline 的 **Play**。
-2. 確認模擬 UR3 移動至與實體 UR3 相同的六軸姿勢，而且沒有控制實體機器人。
-3. 檢查關節方向及大致位置是否一致。
-4. 讓 Timeline 保持 **Play**。
-
-編輯 Robot Poser 目標時，Timeline 保持 **Play**。Action Graph 必須只將
-`/joint_states` 寫入實機回授用 UR3，Robot Poser 則只操作規劃用 UR3。
-如果規劃用 UR3 被拉回實機位置，請修正 Action Graph
-的 articulation 目標，不要停止 Timeline。
-
-### 10. 使用 Robot Poser 建立小幅度命名姿勢
-
-Timeline 保持 **Play**：
-
-1. 開啟 **Robot Poser**。
-2. 將 **Active Robot** 設為 `/World/ur3`。
-3. 將 **Start Site** 設為 `/World/ur3/base_link`。
-4. 將 **End Site** 設為 `/World/ur3/wrist_3_link/flange`。
-5. 從同步完成的目前姿勢建立一個命名姿勢，例如
-   `physical_verify_small_move`。
-6. 啟用 target/tracking，第一次測試時只將 End Effector Target 移動幾毫米，
-   並避免大幅改變方向。
-7. 確認 Robot Poser 顯示 IK 求解成功。
-8. 停用 target/tracking，然後儲存或更新命名姿勢。
-
-拖曳 Robot Poser target 只會改變模擬目標。實體 UR3 不會跟隨滑鼠移動；只有在
-按下 Extension 的 **Execute on Physical UR3** 並通過所有前置檢查後，
-實體機器人才應該移動。
-
-### 11. 載入並檢查 IK 解
-
-在 **UR3 Robot Poser Execution** 視窗中：
-
-1. 按下 **Refresh**。
-2. 從 **Named Pose** 選擇 `physical_verify_small_move`。
-3. 按下 **Load and Validate IK Solution**。
-4. 確認 UI 顯示六個以弧度為單位的有限關節值。
-5. 第一次實機測試時，將 **Joint speed limit** 設為最小值 `0.05 rad/s`。
-6. 確認 Timeline 仍為 **Play**，且實機回授用 UR3 仍從實體
-   `/joint_states` 持續更新。
-7. 確認工作空間安全，然後按下 **Execute on Physical UR3**。通過前置
-   檢查後會立即送出目標，不會再顯示確認視窗。
-8. 確認 Status 依序顯示目標正在送出、已接受與最終執行結果。
-
-Extension 會比較最近一次收到的實體關節位置與目標，並計算軌跡時間。使用者
-不需輸入時間：
-
-```text
-時間 = max(0.1 s, 最大關節位移 / 所選關節速度)
-```
-
-滑桿上限為 `180 度/s`（`pi rad/s`），這是 UR3 datasheet 所列兩種額定值中
-較低的一個：肩部／肘部關節額定速度為 `180 度/s`，腕部關節則為
-`360 度/s`。使用這個共同上限，可確保單一滑桿值對每一個關節都有效。Teach
-Pendant 速度滑桿與 UR scaled trajectory controller 可能進一步降低實際速度。
-
-Timeline 未開始播放時，Extension 仍允許送出軌跡。
-此時 Extension 仍會直接接收 ROS 2 `/joint_states` 用於執行監控，但模擬
-UR3 不會透過 Action Graph 同步顯示實機姿態。
-
-### 12. 執行實體運動
-
-按下 **Execute on Physical UR3** 前，請確認下列所有項目：
-
-- 完整工作空間內沒有任何障礙物。
-- 目標非常接近機器人目前姿勢。
-- 六個目標角度、所選速度及預期方向都正確。
-- 可立即操作 Teach Pendant 及緊急停止按鈕。
-- 沒有其他 ROS 2 node 正在傳送機器人指令。
-- 若需要模擬畫面同步顯示實機回授，Isaac Sim Timeline 為 **Play**。
-
-只有每項檢查都通過時，才可按下 **Execute**。預期的狀態順序如下：
-
-```text
-Goal accepted. Executing pose 'physical_verify_small_move'...
-Pose 'physical_verify_small_move' completed successfully.
-```
-
-請在整個運動期間持續觀察實體手臂。如果方向、速度、聲音或姿勢不如預期，
-請立即使用 Teach Pendant 的安全停止功能或實體緊急停止按鈕。
-**Cancel Goal** 在實機執行期間只會提出 ROS 2 Action 取消要求；
-它不是通過安全認證的停止功能，也不能取代緊急停止按鈕。
-
-### 13. 驗證結果
-
-成功完成後：
-
-1. 讓 Timeline 保持 **Play**，使實體最終姿勢持續同步至 Isaac Sim。
-2. 確認模擬 UR3 與實體 UR3 的姿勢一致。
-3. 在終端機 2 擷取最終關節位置：
+1. 先完成 Mock Hardware 測試。
+2. 停止 Mock driver，依實驗室 SOP 準備 UR3、payload、TCP、External Control 與
+   低速 Teach Pendant 設定。
+3. 清空完整工作空間，確認緊急停止可立即操作，並啟動實體 UR driver。
+4. 使用下列指令確認回授、controller 與 Action server：
 
    ```bash
    ros2 topic echo /joint_states --once
+   ros2 service call /controller_manager/list_controllers \
+     controller_manager_msgs/srv/ListControllers "{}"
+   ros2 action info \
+     /scaled_joint_trajectory_controller/follow_joint_trajectory
    ```
 
-4. 確認最終數值接近 Extension 顯示的六個目標角度。
-5. 確認沒有發生 Protective Stop 或 controller 錯誤。
-6. 編輯下一個 Robot Poser 目標時，讓 Timeline 繼續保持 **Play**。
+5. 使用只移動數毫米的保守 Named Pose，載入後逐一核對六軸目標方向與角度。
+6. 第一次測試將 Extension 速度設為 `0.05 rad/s`，確認沒有其他 node 控制機器人。
+7. 按 Execute 後持續觀察實體手臂；任何方向、速度、聲音或姿態異常都應使用實體
+   安全停止手段。
+8. 成功或失敗後同時檢查 Extension Status、UR controller log 與最終
+   `/joint_states`。
 
-### 14. 安全關閉
+Timeline 狀態不會阻擋上述流程。若場景另外使用 ROS 2 Action Graph 將實機
+`/joint_states` 套用到模擬回授手臂，通常需要 Timeline 保持 **Play** 才能看到
+同步；那條視覺路徑與 Extension 自己的 subscriber 是彼此獨立的。
 
-測試完成後：
+## UI 行為
 
-1. 不要開始下一個運動。
-2. 停止或停用自訂 Extension，然後關閉 Isaac Sim。
-3. 在終端機 1 中按下 `Ctrl+C`，停止 UR driver。
-4. 停止 Teach Pendant 上的 External Control 程式。
-5. 如果不再需要機器人，請依實驗室程序關閉電源。
-
-## 固定設定
-
-目前實作在 `exts/omni/isaac/ur3_sync/extension.py` 中定義機器人及 ROS 2
-介面：
-
-| 設定 | 預設值 |
+| 控制項 | 行為 |
 | --- | --- |
-| Robot prim | `/World/ur3` |
-| 關節狀態 topic | `/joint_states` |
-| 軌跡 Action | `/scaled_joint_trajectory_controller/follow_joint_trajectory` |
-| 使用者速度範圍 | `0.05-pi rad/s` |
-| 預設使用者速度 | `0.5 rad/s` |
-| 內部最短軌跡時間 | `0.1 s` |
-| 停滯偵測啟動寬限時間 | `1.0 s` |
-| 停滯逾時 | `3.0 s` |
-| 有效移動門檻 | `0.002 rad` |
-| 停滯監控的目標容許誤差 | `0.01 rad` |
+| `Named Pose` | 選擇目前 `/World/ur3` 的已儲存姿勢；變更選項會使舊目標失效 |
+| `Refresh` | 重新掃描 Stage 與 Named Poses，同時清除已驗證目標 |
+| `Load and Validate IK Solution` | 載入、排序並驗證六個關節值；執行期間不可使用 |
+| `Joint speed limit` | 設定 duration 計算使用的共同速度上限 |
+| `Execute on Physical UR3` | 通過前置檢查後立即傳送一個 Action goal |
+| `Cancel Goal` | 僅在 goal accepted 後啟用；要求 controller 取消，不是 emergency stop |
+| `Status` | 顯示掃描、驗證、goal、cancel、stall 與 controller 結果 |
 
-這些值是 `Ur3SyncExtension` 的 class constants。如果 Stage、ROS namespace
-或 controller 使用不同路徑，請在啟動 Isaac Sim 前更新對應 constants：
-
-```python
-ACTION_NAME = "/scaled_joint_trajectory_controller/follow_joint_trajectory"
-JOINT_STATE_TOPIC = "/joint_states"
-ROBOT_PRIM_PATH = "/World/ur3"
-MIN_COMMAND_SPEED = 0.05
-MAX_COMMAND_SPEED = math.radians(180.0)
-DEFAULT_COMMAND_SPEED = 0.5
-MIN_TRAJECTORY_DURATION = 0.1
-STALL_STARTUP_GRACE = 1.0
-STALL_TIMEOUT = 3.0
-STALL_MOVEMENT_THRESHOLD = 0.002
-STALL_GOAL_TOLERANCE = 0.01
-```
-
-## 驗證方式
-
-姿勢可以執行前，Extension 會驗證：
-
-- 存在使用中的 USD Stage；
-- `/World/ur3` 是有效 prim；
-- 所選命名姿勢存在；
-- Robot Poser 將其 IK 結果標示為成功；
-- 儲存結果包含全部六個預期的 UR 關節名稱；
-- 每個目標關節值都是有限值；
-- 已收到完整的實體 `/joint_states` 訊息；
-- 軌跡 Action server 已準備就緒。
-
-變更所選姿勢或重新整理姿勢清單，都會使已載入的解失效，因此必須重新載入並
-再次檢查。
-
-### 動作完成判定
-
-最終執行結果以 `FollowJointTrajectory` Action server 回傳為準。只有 ROS Goal
-狀態為 `STATUS_SUCCEEDED`，且 controller 結果為 `SUCCESSFUL`，Extension 才會
-顯示動作成功。Controller 會依自身設定的 goal tolerance 判斷手臂是否到站。
-
-`/joint_states` 與 Action result 是兩條非同步訊息來源，因此 Action 完成當下的
-最新一筆 `/joint_states` 快取可能仍是到站前的樣本。Extension 不再用這筆快取
-推翻 controller 的成功結果；它仍用於執行期間的停滯偵測，以及 Action 失敗時
-顯示剩餘關節誤差。
+執行期間 Execute 與速度滑桿會停用；goal accepted 後才啟用 Cancel。收到最終
+result 後會清除 Action/watchdog 狀態並恢復控制項。先前驗證的 Pose 仍保留，所以
+結果完成後可以再次執行同一目標。
 
 ## 疑難排解
 
-### 沒有列出任何命名姿勢
+### `No active USD stage`
 
-- 確認目前 Stage 包含 `/World/ur3`。
-- 在 Robot Poser 中建立、求解並儲存一個命名姿勢。
-- 按下 **Refresh**。
+先開啟場景，再按 Refresh。
 
 ### `Robot prim not found: /World/ur3`
 
-Articulation 位於不同的 USD 路徑。請將它移動或 reference 至 `/World/ur3`，
-或變更 `extension.py` 中的 `ROBOT_PRIM_PATH`。
+目前 Stage 的 UR3 不在固定路徑。調整 Stage，或修改 `ROBOT_PRIM_PATH`。
+
+### 沒有任何 Named Pose
+
+用 Robot Poser 對 `/World/ur3` 成功求解並儲存 Named Pose，再按 Refresh。
 
 ### `IK result is missing UR joints`
 
-已儲存的 Robot Poser 結果並未包含全部六個預期關節名稱。請確認 Robot Poser
-的目標是 UR3 articulation，且其 joint prim 名稱符合[需求](#需求)中列出的名稱。
+Named Pose 不含完整六軸資料，或 joint prim 名稱不符合預期。確認 Robot Poser 的
+Active Robot 與六個 joint prim 名稱。
 
-### 未收到有效的 `/joint_states`
+### `No valid /joint_states received`
 
-- 確認 UR driver 正在執行並發布 `/joint_states`。
-- 確認訊息包含全部六個預期關節。
-- 確認 Isaac Sim 與 driver 使用相容的 ROS 2 middleware 設定及相同的
-  `ROS_DOMAIN_ID`。
+確認 driver 正在發布、訊息包含全部六個名稱與有限的 position 值，並確認 Isaac
+Sim 與 driver 的 `ROS_DOMAIN_ID`／DDS 設定一致。
 
-### Action server 尚未準備就緒
+### Action server 尚未準備好
 
-檢查 `/scaled_joint_trajectory_controller/follow_joint_trajectory` 是否存在，
-以及 scaled joint trajectory controller 是否為 active。如果 driver 使用
-namespace 或其他 controller 名稱，請更新 `ACTION_NAME`。
+確認 `scaled_joint_trajectory_controller` 為 active，且 Action 名稱與固定的
+`ACTION_NAME` 相同。若 driver 使用 namespace，需同步修改常數。
 
-### 目標被拒絕或執行失敗
+### Goal rejected、aborted 或 failed
 
-查看 Extension 顯示的狀態，並檢查 UR driver/controller log。常見原因包括
-controller 未啟用、超出關節限制、Protective Stop，或實體機器人無法安全到達
-目標。
+檢查 UR driver/controller log、關節限制、External Control、Protective Stop 與
+安全狀態。Extension 不會自行修復 controller fault。
 
-### 偵測到可能的碰撞或運動停滯
+### 顯示 suspected motion stall
 
-Extension 推斷手臂在距離目標仍超過 `0.01 rad` 時，已連續 `3.0 s` 沒有產生
-至少 `0.002 rad` 的關節進度。它會要求取消軌跡並顯示警告對話框。這是保守的
-停滯偵測器，不是碰撞感測器：Teach Pendant 速度滑桿暫停、過度激進的外部
-速度縮放、遺失 `/joint_states` 或 controller 故障，都可能顯示相同警告。
-重設或傳送下一個目標前，請先檢查 UR controller 及實體工作空間。
+先不要送下一個目標。檢查實體工作空間、Teach Pendant、速度縮放、Protective
+Stop、controller log 與 `/joint_states` 是否仍更新。自動 cancellation 被接受也
+不代表機器人已安全停止；需等待 final canceled result 並直接觀察機器人。
 
 ## 專案結構
 
@@ -589,10 +454,25 @@ Extension 推斷手臂在距離目標仍超過 `0.01 rad` 時，已連續 `3.0 s
 .
 ├── config/
 │   └── extension.toml
-└── exts/
-    └── omni/isaac/ur3_sync/
-        ├── __init__.py
-        └── extension.py
+├── exts/
+│   └── omni/isaac/ur3_sync/
+│       ├── __init__.py
+│       └── extension.py
+├── scenes/
+│   └── real2sim_ur3_dev.usd
+├── feedback/
+│   ├── ur3_us.pdf
+│   └── *.md
+└── weekly_report_0801/
+    └── ...
 ```
 
-Extension 版本定義於 `config/extension.toml`。
+## 安全關閉
+
+1. 不要再開始新的動作。
+2. 若 goal 仍在執行，先用適合現場狀況的安全停止方式處理；不要只依賴關閉
+   Extension。
+3. 停用 Extension 時，它會 best-effort 要求取消仍在執行的 goal，然後銷毀 UI、
+   ActionClient 與 ROS node。
+4. 停止 UR driver 與 Teach Pendant External Control 程式。
+5. 依實驗室 SOP 關閉機器人電源。
