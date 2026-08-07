@@ -1,14 +1,16 @@
 [package]
 name = "omni.isaac.ur3_sync"
 title = "UR3 Robot Poser Executor"
-description = "Validates Robot Poser named-pose IK results before executing them on a physical UR3 through ROS 2"
-version = "1.3.2"
+description = "Captures or loads Isaac Sim UR3 joint targets before executing them on a physical UR3 through ROS 2"
+version = "1.4.0"
 category = "Robotics"
 keywords = ["isaacsim", "robotics", "ros2", "ur3"]
 
 [dependencies]
 "omni.kit.uiapp" = {}
 "omni.kit.window.popup_dialog" = {}
+"omni.timeline" = {}
+"isaacsim.core.experimental.prims" = {}
 "isaacsim.core.utils" = {}
 "omni.physx" = {}
 "isaacsim.ros2.bridge" = {}

@@ -1,7 +1,8 @@
-"""Bridge Robot Poser IK poses to a physical UR3 trajectory controller.
+"""Bridge Isaac Sim joint targets to a physical UR3 controller.
 
-The operator selects and validates a named pose, then sends one
-FollowJointTrajectory goal. Joint positions are never continuously streamed.
+The operator loads a Robot Poser named pose or captures the planning
+articulation's current positions, then sends one FollowJointTrajectory goal.
+Joint positions are never continuously streamed.
 """
 
 import math
@@ -11,6 +12,7 @@ import carb
 import omni.ext
 import omni.kit.app
 import omni.kit.window.popup_dialog
+import omni.timeline
 import omni.ui as ui
 import omni.usd
 
@@ -22,19 +24,25 @@ from rclpy.action import ActionClient
 from sensor_msgs.msg import JointState
 from trajectory_msgs.msg import JointTrajectoryPoint
 
+from isaacsim.core.experimental.prims import Articulation
 from isaacsim.robot.poser import (
     get_named_pose,
     list_named_poses,
 )
 
+from .joint_targets import normalize_joint_positions
+
 
 class Ur3SyncExtension(omni.ext.IExt):
-    """載入 Robot Poser IK 結果，並將其傳送至實體 UR3。"""
+    """載入模擬 UR3 關節目標，並將其傳送至實體 UR3。"""
 
     ACTION_NAME = "/scaled_joint_trajectory_controller/follow_joint_trajectory"
     JOINT_STATE_TOPIC = "/joint_states"
 
     ROBOT_PRIM_PATH = "/World/ur3"
+
+    TARGET_SOURCE_NAMED_POSE = "named_pose"
+    TARGET_SOURCE_CURRENT_SIMULATION = "current_simulation"
 
     # UR3 data-sheet limits (feedback/ur3_us.pdf): the three arm joints are
     # rated for 180 deg/s and the three wrist joints for 360 deg/s.  The UI
@@ -78,7 +86,8 @@ class Ur3SyncExtension(omni.ext.IExt):
 
         self._pose_names = []
         self._updating_pose_combo = False
-        self._pending_pose_name = None
+        self._pending_target_source = None
+        self._pending_target_label = None
         self._pending_positions = None
         self._hardware_positions = None
 
@@ -87,6 +96,7 @@ class Ur3SyncExtension(omni.ext.IExt):
         self._cancel_future = None
         self._goal_handle = None
         self._is_executing = False
+        self._active_target_label = None
         self._active_target_positions = None
         self._execution_watchdog_active = False
         self._execution_started_time = None
@@ -312,13 +322,13 @@ class Ur3SyncExtension(omni.ext.IExt):
         self._window = ui.Window(
             "UR3 Robot Poser Execution",
             width=470,
-            height=520,
+            height=580,
         )
 
         with self._window.frame:
             with ui.VStack(spacing=10, padding=12):
                 ui.Label(
-                    "Robot Poser IK => Physical UR3",
+                    "Simulation Target => Physical UR3",
                     style={"font_size": 16, "color": 0xFFFFAA00},
                 )
                 ui.Label(
@@ -356,6 +366,17 @@ class Ur3SyncExtension(omni.ext.IExt):
                     clicked_fn=self._on_load_clicked,
                 )
 
+                self.get_current_btn = ui.Button(
+                    "Get Current Simulation Pose",
+                    height=36,
+                    clicked_fn=self._on_get_current_clicked,
+                    tooltip=(
+                        "Capture the actual PhysX joint positions of "
+                        f"{self.ROBOT_PRIM_PATH}. The Timeline must be "
+                        "playing."
+                    ),
+                )
+
                 with ui.HStack(height=28, spacing=8):
                     ui.Label("Joint speed limit:", width=125)
                     self.speed_slider = ui.FloatSlider(
@@ -388,9 +409,9 @@ class Ur3SyncExtension(omni.ext.IExt):
                 )
 
                 self.solution_label = ui.Label(
-                    "No IK solution loaded.",
+                    "No target loaded.",
                     word_wrap=True,
-                    height=70,
+                    height=82,
                     style={"font_size": 12, "color": 0xFFBBBBBB},
                 )
 
@@ -410,7 +431,8 @@ class Ur3SyncExtension(omni.ext.IExt):
                 ui.Separator()
                 ui.Label("Status")
                 self.status_label = ui.Label(
-                    "Waiting for a Robot Poser named pose.",
+                    "Load a named pose or capture the current simulation "
+                    "pose.",
                     word_wrap=True,
                     height=65,
                     style={"font_size": 12, "color": self.STATUS_INFO},
@@ -514,7 +536,7 @@ class Ur3SyncExtension(omni.ext.IExt):
 
     def _refresh_pose_names(self):
         """重新掃描目前 Stage 中的 Robot Poser 命名解。"""
-        self._invalidate_pending_solution()
+        self._invalidate_pending_target()
 
         stage = omni.usd.get_context().get_stage()
         if stage is None:
@@ -539,13 +561,13 @@ class Ur3SyncExtension(omni.ext.IExt):
         if self._pose_names:
             self._set_status(
                 f"Found {len(self._pose_names)} Robot Poser named pose(s). "
-                "Select one and load its IK solution.",
+                "Load one, or capture the current simulation pose.",
                 self.STATUS_OK,
             )
         else:
             self._set_status(
-                "No Robot Poser named poses found. Create and save a pose, "
-                "then click Refresh.",
+                "No Robot Poser named poses found. You can still capture "
+                "the current simulation pose while the Timeline is playing.",
                 self.STATUS_WARN,
             )
 
@@ -555,7 +577,7 @@ class Ur3SyncExtension(omni.ext.IExt):
         if self._updating_pose_combo:
             return
         self._update_selected_pose_label()
-        self._invalidate_pending_solution()
+        self._invalidate_pending_target()
         self._set_status(
             "Pose selection changed. Load and validate the IK solution.",
             self.STATUS_INFO,
@@ -575,15 +597,30 @@ class Ur3SyncExtension(omni.ext.IExt):
             return None
         return self._pose_names[index]
 
-    def _invalidate_pending_solution(self):
-        """清除已驗證目標，並停用實體執行。"""
-        self._pending_pose_name = None
+    def _invalidate_pending_target(self):
+        """清除已驗證或已擷取的目標，並停用實體執行。"""
+        self._pending_target_source = None
+        self._pending_target_label = None
         self._pending_positions = None
 
         if getattr(self, "execute_btn", None) is not None:
             self.execute_btn.enabled = False
         if getattr(self, "solution_label", None) is not None:
-            self.solution_label.text = "No IK solution loaded."
+            self.solution_label.text = "No target loaded."
+
+    def _format_joint_positions(self, positions):
+        """依 controller 順序格式化六個關節值。"""
+        return "  ".join(
+            f"{name.replace('_joint', '')}={value:+.3f}"
+            for name, value in zip(self.ur_joint_names, positions)
+        )
+
+    def _set_pending_target(self, source, label, positions):
+        """儲存一份不可由後續模擬變更影響的關節目標快照。"""
+        self._pending_target_source = source
+        self._pending_target_label = label
+        self._pending_positions = list(positions)
+        self.execute_btn.enabled = True
 
     # ------------------------------------------------------------------
     # Robot Poser 結果處理
@@ -657,25 +694,99 @@ class Ur3SyncExtension(omni.ext.IExt):
         try:
             positions = self._load_named_pose_positions(pose_name)
         except Exception as exc:
-            self._invalidate_pending_solution()
+            self._invalidate_pending_target()
             self._set_status(str(exc), self.STATUS_ERROR)
             return
 
-        self._pending_pose_name = pose_name
-        self._pending_positions = positions
-        self.execute_btn.enabled = True
-
-        formatted = "  ".join(
-            f"{name.replace('_joint', '')}={value:+.3f}"
-            for name, value in zip(self.ur_joint_names, positions)
+        self._set_pending_target(
+            self.TARGET_SOURCE_NAMED_POSE,
+            pose_name,
+            positions,
         )
         self.solution_label.text = (
-            f"Pose: {pose_name}\n"
-            f"Joint positions (rad): {formatted}"
+            "Source: Robot Poser Named Pose\n"
+            f"Target: {pose_name}\n"
+            "Joint positions (rad): "
+            f"{self._format_joint_positions(positions)}"
         )
         self._set_status(
             "IK solution loaded and validated. Review the target joints "
             "before physical execution.",
+            self.STATUS_OK,
+        )
+
+    # ------------------------------------------------------------------
+    # 目前模擬姿勢擷取
+    # ------------------------------------------------------------------
+
+    def _read_current_simulation_positions(self):
+        """讀取規劃用 articulation 當下真正到達的六軸關節位置。"""
+        stage = omni.usd.get_context().get_stage()
+        if stage is None:
+            raise RuntimeError("No active USD stage")
+
+        robot_prim = stage.GetPrimAtPath(self.ROBOT_PRIM_PATH)
+        if not robot_prim.IsValid():
+            raise RuntimeError(
+                f"Robot prim not found: {self.ROBOT_PRIM_PATH}"
+            )
+
+        timeline = omni.timeline.get_timeline_interface()
+        if not timeline.is_playing():
+            raise RuntimeError(
+                "Start the Isaac Sim Timeline before capturing the current "
+                "simulation pose"
+            )
+
+        articulation = Articulation(self.ROBOT_PRIM_PATH)
+        if not articulation.is_physics_tensor_entity_valid():
+            raise RuntimeError(
+                "The planning articulation is not ready. Keep the "
+                "Timeline playing, wait one simulation frame, and try "
+                "Get Current again"
+            )
+
+        position_data = articulation.get_dof_positions()
+        position_rows = position_data.to("cpu").numpy()
+        return normalize_joint_positions(
+            articulation.dof_names,
+            position_rows,
+            self.ur_joint_names,
+        )
+
+    def _on_get_current_clicked(self):
+        """擷取規劃用模擬 UR3 的實際姿勢，作為下一個實機目標。"""
+        if self._is_executing:
+            self._set_status(
+                "Cannot capture a simulation pose while a trajectory is "
+                "executing.",
+                self.STATUS_WARN,
+            )
+            return
+
+        # A failed capture must not leave an older target executable.
+        self._invalidate_pending_target()
+        try:
+            positions = self._read_current_simulation_positions()
+        except Exception as exc:
+            self._set_status(str(exc), self.STATUS_ERROR)
+            return
+
+        target_label = "Current Simulation Snapshot"
+        self._set_pending_target(
+            self.TARGET_SOURCE_CURRENT_SIMULATION,
+            target_label,
+            positions,
+        )
+        self.solution_label.text = (
+            "Source: Current Simulation Pose\n"
+            f"Target: {target_label}\n"
+            "Joint positions (rad): "
+            f"{self._format_joint_positions(positions)}"
+        )
+        self._set_status(
+            "Current simulation pose captured. Review the six-joint "
+            "snapshot before physical execution.",
             self.STATUS_OK,
         )
 
@@ -693,11 +804,13 @@ class Ur3SyncExtension(omni.ext.IExt):
             return
 
         if (
-            self._pending_pose_name is None
+            self._pending_target_source is None
+            or self._pending_target_label is None
             or self._pending_positions is None
         ):
             self._set_status(
-                "Load and validate an IK solution first.",
+                "Load a named pose or capture the current simulation pose "
+                "first.",
                 self.STATUS_ERROR,
             )
             return
@@ -725,12 +838,12 @@ class Ur3SyncExtension(omni.ext.IExt):
         )
 
         # Capture an immutable snapshot so later UI changes cannot alter it.
-        pose_name = self._pending_pose_name
+        target_label = self._pending_target_label
         target_positions = list(self._pending_positions)
         self._send_trajectory_goal(
             target_positions,
             duration,
-            pose_name,
+            target_label,
         )
 
     def _show_motion_warning(self, message):
@@ -771,7 +884,7 @@ class Ur3SyncExtension(omni.ext.IExt):
         self,
         target_positions,
         duration_sec,
-        pose_name,
+        target_label,
     ):
         """建立並非同步傳送一個單點軌跡目標。"""
         # Recheck defensively in case server state changed after validation.
@@ -797,14 +910,16 @@ class Ur3SyncExtension(omni.ext.IExt):
         goal.trajectory.points.append(point)
 
         self._active_target_positions = list(target_positions)
+        self._active_target_label = target_label
         self._is_executing = True
         self.execute_btn.enabled = False
+        self.load_btn.enabled = False
+        self.get_current_btn.enabled = False
         self.speed_slider.enabled = False
         self.stop_btn.enabled = False
-        self._active_pose_name = pose_name
 
         self._set_status(
-            f"Sending pose '{pose_name}' to the trajectory controller...",
+            f"Sending target '{target_label}' to the trajectory controller...",
             self.STATUS_INFO,
         )
 
@@ -844,7 +959,8 @@ class Ur3SyncExtension(omni.ext.IExt):
         self._start_execution_watchdog()
         self.stop_btn.enabled = True
         self._set_status(
-            f"Goal accepted. Executing pose '{self._active_pose_name}'...",
+            "Goal accepted. Executing target "
+            f"'{self._active_target_label}'...",
             self.STATUS_OK,
         )
 
@@ -868,7 +984,7 @@ class Ur3SyncExtension(omni.ext.IExt):
             )
             return
 
-        pose_name = getattr(self, "_active_pose_name", "<unknown>")
+        target_label = self._active_target_label or "<unknown>"
         stall_detected = self._stall_detected
         stall_details = self._stall_details
         cancel_reason = self._cancel_reason
@@ -891,7 +1007,7 @@ class Ur3SyncExtension(omni.ext.IExt):
             == FollowJointTrajectory.Result.SUCCESSFUL
         ):
             self._set_status(
-                f"Pose '{pose_name}' completed successfully.",
+                f"Target '{target_label}' completed successfully.",
                 self.STATUS_OK,
             )
         elif status == GoalStatus.STATUS_CANCELED:
@@ -900,13 +1016,13 @@ class Ur3SyncExtension(omni.ext.IExt):
                     "The motion stopped before reaching the goal."
                 )
                 self._set_status(
-                    f"Pose '{pose_name}' was cancelled after a suspected "
+                    f"Target '{target_label}' was cancelled after a suspected "
                     f"motion stall. {details}",
                     self.STATUS_ERROR,
                 )
             else:
                 self._set_status(
-                    f"Pose '{pose_name}' was cancelled.",
+                    f"Target '{target_label}' was cancelled.",
                     self.STATUS_WARN,
                 )
         else:
@@ -1009,10 +1125,15 @@ class Ur3SyncExtension(omni.ext.IExt):
         self._send_future = None
         self._result_future = None
         self._cancel_future = None
+        self._active_target_label = None
         self._reset_execution_watchdog()
 
         if getattr(self, "execute_btn", None) is not None:
             self.execute_btn.enabled = self._pending_positions is not None
+        if getattr(self, "load_btn", None) is not None:
+            self.load_btn.enabled = True
+        if getattr(self, "get_current_btn", None) is not None:
+            self.get_current_btn.enabled = True
         if getattr(self, "speed_slider", None) is not None:
             self.speed_slider.enabled = True
         if getattr(self, "stop_btn", None) is not None:

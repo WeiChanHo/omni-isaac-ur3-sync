@@ -1,11 +1,11 @@
 # UR3 Robot Poser Executor
 
-`omni.isaac.ur3_sync` 是一個 NVIDIA Isaac Sim Extension。它會讀取 Robot
-Poser 已儲存的 Named Pose，驗證其中的六軸 IK 關節角，然後透過 ROS 2
-`FollowJointTrajectory` Action 將**一個單點軌跡目標**傳送給 Universal Robots
-UR3 的 trajectory controller。
+`omni.isaac.ur3_sync` 是一個 NVIDIA Isaac Sim Extension。它可以讀取 Robot
+Poser 已儲存的 Named Pose，或擷取規劃用模擬 UR3 當下真正到達的六軸關節角，
+然後透過 ROS 2 `FollowJointTrajectory` Action 將**一個單點軌跡目標**傳送給
+Universal Robots UR3 的 trajectory controller。
 
-目前 Extension 版本為 `1.3.2`。
+目前 Extension 版本為 `1.4.0`。
 
 > [!WARNING]
 > 這個 Extension 可以控制實體機器人，但它不是安全控制器。`Cancel Goal`
@@ -17,22 +17,25 @@ UR3 的 trajectory controller。
 
 1. 啟動一個名為 `isaacsim_ur3_sync_extension` 的 ROS 2 node。
 2. 訂閱 `/joint_states`，依固定的 UR3 關節順序快取最近一筆完整且有限的關節角。
-3. 從目前開啟的 USD Stage 取得 `/World/ur3` 上的 Robot Poser Named Poses。
-4. 載入使用者選擇的 Named Pose，確認 IK 成功、六個關節完整且數值有限。
-5. 以目前實機關節角、目標關節角與使用者速度上限計算軌跡時間。
-6. 將一個 `FollowJointTrajectory` goal 非同步傳送到
+3. 提供兩種目標來源：載入 `/World/ur3` 的 Robot Poser Named Pose，或在
+   Timeline Play 時按 **Get Current Simulation Pose** 擷取該 articulation 的
+   PhysX 實際關節角。
+4. 將目標依 controller 的六軸順序排列，確認資料完整且數值有限。
+5. 將按鈕當下的目標保存為快照；後續模擬手臂移動不會改變這筆目標。
+6. 以目前實機關節角、目標關節角與使用者速度上限計算軌跡時間。
+7. 將一個 `FollowJointTrajectory` goal 非同步傳送到
    `/scaled_joint_trajectory_controller/follow_joint_trajectory`。
-7. 以 Action result 判定成功、取消或失敗；執行中則用 `/joint_states` 偵測疑似
+8. 以 Action result 判定成功、取消或失敗；執行中則用 `/joint_states` 偵測疑似
    停滯，必要時顯示警告並自動要求取消。
 
 ### 目前不做的事
 
 - 不計算 IK；IK 由 Isaac Sim Robot Poser 完成。
-- 不直接讀取模擬 articulation 的「目前姿勢」作為目標。
 - 不做 live streaming，也不持續把模擬關節值發布給實體 UR3。
 - 不產生多點路徑、不提供 Plan Preview，也不保證 controller 的實際插值路徑。
 - 不做碰撞檢查、路徑規劃、完整關節限制驗證或速度／加速度安全認證。
-- 不要求 Isaac Sim Timeline 必須為 Play，且不會自行啟動或停止 Timeline。
+- Named Pose 執行不要求 Timeline Play；Get Current 則必須在 Play 時讀取有效的
+  PhysX articulation。Extension 不會自行啟動或停止 Timeline。
 - 按下 **Execute on Physical UR3** 並通過程式前置檢查後會立即送出 goal，沒有二次
   確認視窗。
 
@@ -49,14 +52,18 @@ flowchart LR
         Manifest["config/extension.toml<br/>套件資訊與依賴"]
         Init["__init__.py<br/>匯出 Extension class"]
         Ext["extension.py<br/>Ur3SyncExtension"]
+        Normalize["joint_targets.py<br/>六軸排序與數值驗證"]
         Scene["scenes/real2sim_ur3_dev.usd<br/>開發場景資產"]
         Manifest --> Init --> Ext
+        Ext --> Normalize
     end
 
     RobotPoser["Isaac Sim Robot Poser<br/>求解並儲存 Named Pose"] --> Stage["目前開啟的 USD Stage<br/>/World/ur3"]
     Scene -.->|"可由使用者開啟；不會自動載入"| Stage
     Stage -->|"Named Pose / joint prim paths"| Ext
-    UI -->|"Refresh / Load / Execute / Cancel"| Ext
+    Stage --> PlanningArm["PhysX planning articulation<br/>/World/ur3"]
+    PlanningArm -->|"Get Current: actual DOF positions"| Ext
+    UI -->|"Refresh / Load / Get Current / Execute / Cancel"| Ext
     Ext -->|"狀態與按鈕啟用狀態"| UI
 
     Kit["Isaac Sim app update event"] -->|"每個 update 呼叫 spin_once"| Ext
@@ -79,12 +86,13 @@ flowchart LR
 | --- | --- | --- |
 | `config/extension.toml` | 定義 Extension ID、名稱、版本、Python module path 與 Isaac Sim dependencies | Isaac Sim Extension Manager 讀取後載入 `omni.isaac.ur3_sync` |
 | `exts/omni/isaac/ur3_sync/__init__.py` | 重新匯出 `extension.py` 的內容 | 讓 Kit 找到 `Ur3SyncExtension` |
-| `exts/omni/isaac/ur3_sync/extension.py` | UI、Robot Poser 資料驗證、ROS 2 node、Action client、取消與 stall watchdog | 讀取目前 Stage，接收 `/joint_states`，呼叫 controller Action |
+| `exts/omni/isaac/ur3_sync/extension.py` | UI、兩種目標來源、ROS 2 node、Action client、取消與 stall watchdog | 讀取 Stage／PhysX articulation，接收 `/joint_states`，呼叫 controller Action |
+| `exts/omni/isaac/ur3_sync/joint_targets.py` | 將 articulation DOF 重新排列成固定六軸順序並驗證數值 | 由 Get Current 呼叫；不依賴 Isaac Sim，能以一般 Python 測試 |
 | `scenes/real2sim_ur3_dev.usd` | 開發用 USD 場景／覆寫層 | 程式不會自動開啟它；Extension 一律操作使用者目前已開啟 Stage 的 `/World/ur3` |
 | `feedback/` | UR3 datasheet 與開發回饋 | 不會在 runtime 載入；datasheet 是目前速度上限註解的依據 |
 | `weekly_report_0801/` | 歷史報告與畫面 | 不參與 runtime，內容可能早於目前實作 |
 
-雖然 `extension.py` 是單一檔案，`Ur3SyncExtension` 內部仍可分為五個責任區：
+`Ur3SyncExtension` 內部可分為六個責任區：
 
 | 區域 | 主要方法 |
 | --- | --- |
@@ -92,6 +100,7 @@ flowchart LR
 | ROS 回授與 Kit event pump | `_on_joint_state`、`_on_app_update` |
 | UI 與 Named Pose 選擇 | `_build_ui`、`_refresh_pose_names`、`_on_pose_selection_changed` |
 | IK 結果載入與驗證 | `_load_named_pose_positions`、`_on_load_clicked` |
+| 模擬姿勢擷取 | `_read_current_simulation_positions`、`_on_get_current_clicked` |
 | 軌跡 Action 與監控 | `_on_execute_clicked`、`_send_trajectory_goal`、goal/result/cancel callbacks、stall watchdog |
 
 ## 啟動與事件迴圈
@@ -134,7 +143,12 @@ sequenceDiagram
 如果 ROS 初始化失敗，`on_startup` 會直接返回，不建立 UI，也不訂閱 app update。
 `on_shutdown` 會銷毀此 Extension 建立的 node，但不會呼叫全域 `rclpy.shutdown()`。
 
-## Named Pose 載入與驗證
+## 目標取得與驗證
+
+兩種來源共用同一組 pending target。最後一次成功載入或擷取的目標會覆蓋前一筆，
+但 Get Current 失敗時會直接撤銷舊目標，避免操作員誤以為畫面已擷取新姿勢。
+
+### Robot Poser Named Pose
 
 Robot Poser 將關節值儲存為「joint prim path → value」。controller 則要求固定的
 關節名稱順序，所以 Extension 會先取得每個 joint prim 的名稱，再重新排列為：
@@ -150,26 +164,40 @@ wrist_3_joint
 
 ```mermaid
 flowchart TD
-    Refresh["Refresh 或 Extension 啟動"] --> Invalidate["清除已驗證目標並停用 Execute"]
-    Invalidate --> HasStage{"目前有 USD Stage？"}
-    HasStage -- 否 --> StageError["Status: No active USD stage"]
-    HasStage -- 是 --> HasPrim{"/World/ur3 是有效 prim？"}
-    HasPrim -- 否 --> PrimError["Status: Robot prim not found"]
-    HasPrim -- 是 --> List["list_named_poses<br/>排序後更新下拉選單"]
-    List --> Select["操作員選擇 Named Pose"]
-    Select --> InvalidateAgain["選項變更會再次使舊目標失效"]
-    InvalidateAgain --> Load["Load and Validate IK Solution"]
-    Load --> Pose["get_named_pose"]
-    Pose --> Checks{"Pose 存在且 success？<br/>六個關節完整？<br/>所有值有限？"}
-    Checks -- 否 --> Reject["顯示原因並保持 Execute disabled"]
-    Checks -- 是 --> Normalize["依 controller 關節順序建立 positions[6]"]
-    Normalize --> Pending["儲存 _pending_pose_name<br/>與 _pending_positions"]
-    Pending --> Review["顯示六個 rad 目標值並啟用 Execute"]
+    Start["選擇目標來源"] --> Named["Load Named Pose"]
+    Start --> Current["Get Current Simulation Pose"]
+
+    Named --> Pose["get_named_pose(/World/ur3)"]
+    Pose --> PoseChecks{"IK success？<br/>六個 joint prim 完整？<br/>所有值有限？"}
+
+    Current --> Timeline{"Timeline Play？"}
+    Timeline -- 是 --> Physics["讀取 /World/ur3<br/>PhysX actual DOF positions"]
+    Physics --> CurrentChecks{"Physics tensor ready？<br/>六個 DOF 完整？<br/>所有值有限？"}
+
+    PoseChecks -- 否 --> Reject["撤銷 pending target<br/>Execute disabled"]
+    Timeline -- 否 --> Reject
+    CurrentChecks -- 否 --> Reject
+    PoseChecks -- 是 --> Normalize["依 controller 六軸順序排列"]
+    CurrentChecks -- 是 --> Normalize
+    Normalize --> Snapshot["複製成不可變 target snapshot"]
+    Snapshot --> Review["顯示來源與六個 rad 值<br/>啟用 Execute"]
 ```
 
 會阻擋載入的條件包括：Stage 不存在、`/World/ur3` 不存在、Named Pose 不存在、
 `pose.success == False`、遺失任一預期關節，或數值含 `NaN`／無限大。切換 Pose 或
 按下 Refresh 都會清除已載入的目標，避免誤送舊資料。
+
+### Get Current Simulation Pose
+
+Get Current 固定讀取規劃手臂 `/World/ur3`，不會讀取 Action Graph 控制的
+`/World/ur3_real2sim`。按下前必須讓 Timeline 保持 **Play**，因為程式取得的是
+PhysX 中真正到達的 DOF positions，不是 Robot Poser 的 drive targets，也不是停止
+時留在 USD attribute 的舊值。
+
+如果剛按下 Play，physics tensor 可能尚未建立；請等待至少一個 simulation frame
+後再按 Get Current。成功擷取後，畫面會顯示 `Current Simulation Snapshot` 與六軸
+值。這是一筆按鈕當下的快照：之後再移動模擬手臂不會偷偷改變即將送出的目標，
+需要更新時必須再次按 Get Current。
 
 ## 軌跡計算與執行
 
@@ -196,7 +224,7 @@ sequenceDiagram
     participant Robot as Mock / Physical UR3
 
     User->>Ext: Execute on Physical UR3
-    Ext->>Ext: 確認未在執行且有 pending pose
+    Ext->>Ext: 確認未在執行且有 pending target snapshot
     Ext->>Cache: 讀取最近一筆完整六軸位置
     Ext->>AC: 確認 Action server ready
     Ext->>Ext: 計算 max_delta 與 duration
@@ -227,18 +255,20 @@ sequenceDiagram
 
 ```mermaid
 stateDiagram-v2
-    [*] --> NoPose: startup / refresh
-    NoPose --> PoseReady: IK 驗證成功
-    PoseReady --> NoPose: refresh 或切換 pose
-    PoseReady --> Sending: Execute 且有硬體快取、server ready
-    Sending --> PoseReady: request exception 或 goal rejected
+    [*] --> NoTarget: startup / refresh
+    NoTarget --> TargetReady: Named Pose 驗證成功
+    NoTarget --> TargetReady: Get Current 成功
+    TargetReady --> NoTarget: refresh / 切換 pose / capture 失敗
+    TargetReady --> TargetReady: 新 Named Pose 或新 snapshot 覆蓋
+    TargetReady --> Sending: Execute 且有硬體快取、server ready
+    Sending --> TargetReady: request exception 或 goal rejected
     Sending --> Executing: goal accepted
     Executing --> Cancelling: Cancel Goal
     Executing --> Cancelling: stall watchdog 觸發
     Cancelling --> Executing: controller 不接受 cancel
-    Executing --> PoseReady: succeeded / aborted / failed
-    Cancelling --> PoseReady: final canceled result
-    PoseReady --> [*]: shutdown
+    Executing --> TargetReady: succeeded / aborted / failed
+    Cancelling --> TargetReady: final canceled result
+    TargetReady --> [*]: shutdown
     Executing --> [*]: shutdown 時 best-effort cancel
 ```
 
@@ -300,6 +330,8 @@ goal 被接受後，watchdog 會監看六軸回授：
 
 - `omni.kit.uiapp`
 - `omni.kit.window.popup_dialog`
+- `omni.timeline`
+- `isaacsim.core.experimental.prims`
 - `isaacsim.core.utils`
 - `omni.physx`
 - `isaacsim.ros2.bridge`
@@ -312,8 +344,10 @@ Python runtime 還會匯入 ROS 2 的 `rclpy`、`action_msgs`、`control_msgs`�
 
 - 使用者必須先開啟一個 USD Stage。
 - Stage 必須包含有效 prim `/World/ur3`。
-- Robot Poser 必須已在該 prim 儲存至少一個成功的 Named Pose。
-- Named Pose 的 joint prim 名稱必須符合固定的六個 UR3 關節名稱。
+- Get Current 不需要 Named Pose，但 `/World/ur3` 必須是可在 Timeline Play 時建立
+  physics tensor 的 articulation，且 DOF 名稱符合固定的六個 UR3 關節名稱。
+- 若使用 Named Pose 流程，Robot Poser 必須已在 `/World/ur3` 儲存成功的 Pose，
+  且 joint prim 名稱符合相同六軸名稱。
 
 Repository 內的 `scenes/real2sim_ur3_dev.usd` 是開發資產，不會由 Extension 自動
 開啟。它若引用其他本機 USD／資產，開啟時也必須確保那些相依路徑可以解析。
@@ -358,11 +392,13 @@ cd /home/spatiallabs/isaacsim
 
 1. 啟動 UR driver 的 Mock Hardware，確認 controller 為 active。
 2. 從相同 ROS domain 啟動 Isaac Sim 並開啟包含 `/World/ur3` 的 Stage。
-3. 在 Robot Poser 求解一個小幅度目標並儲存為 Named Pose。
-4. 在 Extension 按 **Refresh**，選取 Pose，按 **Load and Validate IK Solution**。
-5. 檢查畫面上的六個弧度值，將速度設為保守值。
-6. 確認 `/joint_states` 與 Action server 正常後按 **Execute on Physical UR3**。
-7. 確認 Status 依序出現 sending、accepted、completed；再以 `/joint_states`
+3. 選擇一種目標來源：
+   - 在 Robot Poser 求解小幅度目標並儲存，然後 Refresh、選取並 Load；或
+   - 讓 Timeline 保持 Play，調整 `/World/ur3`，等待手臂到位後按
+     **Get Current Simulation Pose**。
+4. 檢查畫面上的來源與六個弧度值，將速度設為保守值。
+5. 確認 `/joint_states` 與 Action server 正常後按 **Execute on Physical UR3**。
+6. 確認 Status 依序出現 sending、accepted、completed；再以 `/joint_states`
    比較最終位置。
 
 ### 實體 UR3
@@ -381,16 +417,17 @@ cd /home/spatiallabs/isaacsim
      /scaled_joint_trajectory_controller/follow_joint_trajectory
    ```
 
-5. 使用只移動數毫米的保守 Named Pose，載入後逐一核對六軸目標方向與角度。
+5. 使用只移動數毫米的保守 Named Pose，或在規劃手臂到位後擷取 Get Current
+   snapshot；逐一核對六軸目標方向與角度。
 6. 第一次測試將 Extension 速度設為 `0.05 rad/s`，確認沒有其他 node 控制機器人。
 7. 按 Execute 後持續觀察實體手臂；任何方向、速度、聲音或姿態異常都應使用實體
    安全停止手段。
 8. 成功或失敗後同時檢查 Extension Status、UR controller log 與最終
    `/joint_states`。
 
-Timeline 狀態不會阻擋上述流程。若場景另外使用 ROS 2 Action Graph 將實機
-`/joint_states` 套用到模擬回授手臂，通常需要 Timeline 保持 **Play** 才能看到
-同步；那條視覺路徑與 Extension 自己的 subscriber 是彼此獨立的。
+Named Pose 目標不受 Timeline 狀態阻擋，Get Current 則明確要求 Timeline
+**Play**。場景中的 ROS 2 Action Graph 會把實機 `/joint_states` 套用到
+`/World/ur3_real2sim`；這條視覺回授路徑與 Extension 自己的 subscriber 彼此獨立。
 
 ## UI 行為
 
@@ -399,14 +436,15 @@ Timeline 狀態不會阻擋上述流程。若場景另外使用 ROS 2 Action Gra
 | `Named Pose` | 選擇目前 `/World/ur3` 的已儲存姿勢；變更選項會使舊目標失效 |
 | `Refresh` | 重新掃描 Stage 與 Named Poses，同時清除已驗證目標 |
 | `Load and Validate IK Solution` | 載入、排序並驗證六個關節值；執行期間不可使用 |
+| `Get Current Simulation Pose` | Timeline Play 時擷取 `/World/ur3` 的實際六軸位置；失敗會清除舊目標 |
 | `Joint speed limit` | 設定 duration 計算使用的共同速度上限 |
 | `Execute on Physical UR3` | 通過前置檢查後立即傳送一個 Action goal |
 | `Cancel Goal` | 僅在 goal accepted 後啟用；要求 controller 取消，不是 emergency stop |
 | `Status` | 顯示掃描、驗證、goal、cancel、stall 與 controller 結果 |
 
-執行期間 Execute 與速度滑桿會停用；goal accepted 後才啟用 Cancel。收到最終
-result 後會清除 Action/watchdog 狀態並恢復控制項。先前驗證的 Pose 仍保留，所以
-結果完成後可以再次執行同一目標。
+執行期間 Load、Get Current、Execute 與速度滑桿會停用；goal accepted 後才啟用
+Cancel。收到最終 result 後會清除 Action/watchdog 狀態並恢復控制項。先前的
+target snapshot 仍保留，所以結果完成後可以再次執行同一目標。
 
 ## 疑難排解
 
@@ -426,6 +464,22 @@ result 後會清除 Action/watchdog 狀態並恢復控制項。先前驗證的 P
 
 Named Pose 不含完整六軸資料，或 joint prim 名稱不符合預期。確認 Robot Poser 的
 Active Robot 與六個 joint prim 名稱。
+
+### Get Current 要求啟動 Timeline
+
+Get Current 只讀取 PhysX 實際位置。按下 Timeline **Play**，等待至少一個 simulation
+frame，確認 `/World/ur3` 已到達想要的位置，再重新按下按鈕。
+
+### `The planning articulation is not ready`
+
+確認 `/World/ur3` 具有 articulation root，Timeline 正在 Play，且 physics scene 已
+完成初始化。剛開始播放時等待一個 frame 再試；不要改為讀取
+`/World/ur3_real2sim`，那是實機回授手臂。
+
+### `Simulation articulation is missing UR joints`
+
+規劃手臂的 DOF 名稱與固定 UR3 六軸契約不一致。檢查 articulation payload 與
+joint names，不要用索引位置猜測或略過缺少的關節。
 
 ### `No valid /joint_states received`
 
@@ -457,14 +511,23 @@ Stop、controller log 與 `/joint_states` 是否仍更新。自動 cancellation 
 ├── exts/
 │   └── omni/isaac/ur3_sync/
 │       ├── __init__.py
-│       └── extension.py
+│       ├── extension.py
+│       └── joint_targets.py
 ├── scenes/
 │   └── real2sim_ur3_dev.usd
 ├── feedback/
 │   ├── ur3_us.pdf
 │   └── *.md
+├── tests/
+│   └── test_joint_targets.py
 └── weekly_report_0801/
     └── ...
+```
+
+純資料驗證測試不需要啟動 Isaac Sim：
+
+```bash
+python3 -m unittest discover -s tests -v
 ```
 
 ## 安全關閉
