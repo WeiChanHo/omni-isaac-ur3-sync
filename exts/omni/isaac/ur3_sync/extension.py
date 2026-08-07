@@ -312,7 +312,7 @@ class Ur3SyncExtension(omni.ext.IExt):
         self._window = ui.Window(
             "UR3 Robot Poser Execution",
             width=470,
-            height=600,
+            height=520,
         )
 
         with self._window.frame:
@@ -412,7 +412,7 @@ class Ur3SyncExtension(omni.ext.IExt):
                 self.status_label = ui.Label(
                     "Waiting for a Robot Poser named pose.",
                     word_wrap=True,
-                    height=145,
+                    height=65,
                     style={"font_size": 12, "color": self.STATUS_INFO},
                 )
 
@@ -684,7 +684,7 @@ class Ur3SyncExtension(omni.ext.IExt):
     # ------------------------------------------------------------------
 
     def _on_execute_clicked(self):
-        """檢查執行前提，顯示命令摘要並送出目標。"""
+        """檢查執行前提並送出目標。"""
         if self._is_executing:
             self._set_status(
                 "A trajectory is already executing.",
@@ -718,7 +718,7 @@ class Ur3SyncExtension(omni.ext.IExt):
             return
 
         speed = self._get_command_speed()
-        max_delta, duration = self._calculate_motion_duration(
+        _, duration = self._calculate_motion_duration(
             self._hardware_positions,
             self._pending_positions,
             speed,
@@ -727,21 +727,6 @@ class Ur3SyncExtension(omni.ext.IExt):
         # Capture an immutable snapshot so later UI changes cannot alter it.
         pose_name = self._pending_pose_name
         target_positions = list(self._pending_positions)
-        target_text = ", ".join(
-            f"{value:+.3f}"
-            for value in target_positions
-        )
-
-        message = (
-            f"Sending pose '{pose_name}' to the physical UR3.\n"
-            f"Target joints (rad):\n[{target_text}]\n\n"
-            f"Maximum current-to-target delta: {max_delta:.3f} rad\n"
-            f"Selected joint-speed limit: {speed:.2f} rad/s\n"
-            f"System-calculated duration: {duration:.2f} s\n\n"
-            "Keep the workspace clear and the emergency stop within reach."
-        )
-
-        self._set_status(message, self.STATUS_INFO)
         self._send_trajectory_goal(
             target_positions,
             duration,
@@ -817,6 +802,11 @@ class Ur3SyncExtension(omni.ext.IExt):
         self.speed_slider.enabled = False
         self.stop_btn.enabled = False
         self._active_pose_name = pose_name
+
+        self._set_status(
+            f"Sending pose '{pose_name}' to the trajectory controller...",
+            self.STATUS_INFO,
+        )
 
         try:
             self._send_future = self.client.send_goal_async(goal)
