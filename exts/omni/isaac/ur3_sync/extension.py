@@ -1,6 +1,6 @@
 """Bridge Robot Poser IK poses to a physical UR3 trajectory controller.
 
-The operator selects and validates a named pose, confirms it, and sends one
+The operator selects and validates a named pose, then sends one
 FollowJointTrajectory goal. Joint positions are never continuously streamed.
 """
 
@@ -74,7 +74,6 @@ class Ur3SyncExtension(omni.ext.IExt):
         self._joint_state_sub = None
         self._app_update_sub = None
         self._window = None
-        self._confirm_dialog = None
         self._warning_dialog = None
 
         self._pose_names = []
@@ -313,7 +312,7 @@ class Ur3SyncExtension(omni.ext.IExt):
         self._window = ui.Window(
             "UR3 Robot Poser Execution",
             width=470,
-            height=520,
+            height=600,
         )
 
         with self._window.frame:
@@ -413,7 +412,7 @@ class Ur3SyncExtension(omni.ext.IExt):
                 self.status_label = ui.Label(
                     "Waiting for a Robot Poser named pose.",
                     word_wrap=True,
-                    height=65,
+                    height=145,
                     style={"font_size": 12, "color": self.STATUS_INFO},
                 )
 
@@ -556,7 +555,6 @@ class Ur3SyncExtension(omni.ext.IExt):
         if self._updating_pose_combo:
             return
         self._update_selected_pose_label()
-        self._dismiss_confirm_dialog()
         self._invalidate_pending_solution()
         self._set_status(
             "Pose selection changed. Load and validate the IK solution.",
@@ -682,11 +680,11 @@ class Ur3SyncExtension(omni.ext.IExt):
         )
 
     # ------------------------------------------------------------------
-    # 確認與軌跡執行
+    # 軌跡執行
     # ------------------------------------------------------------------
 
     def _on_execute_clicked(self):
-        """檢查執行前提，並要求使用者確認。"""
+        """檢查執行前提，顯示命令摘要並送出目標。"""
         if self._is_executing:
             self._set_status(
                 "A trajectory is already executing.",
@@ -726,7 +724,7 @@ class Ur3SyncExtension(omni.ext.IExt):
             speed,
         )
 
-        # Confirm an immutable snapshot so later UI changes cannot alter it.
+        # Capture an immutable snapshot so later UI changes cannot alter it.
         pose_name = self._pending_pose_name
         target_positions = list(self._pending_positions)
         target_text = ", ".join(
@@ -735,66 +733,20 @@ class Ur3SyncExtension(omni.ext.IExt):
         )
 
         message = (
-            f"Send Robot Poser pose '{pose_name}' to the physical UR3?\n\n"
+            f"Sending pose '{pose_name}' to the physical UR3.\n"
             f"Target joints (rad):\n[{target_text}]\n\n"
             f"Maximum current-to-target delta: {max_delta:.3f} rad\n"
             f"Selected joint-speed limit: {speed:.2f} rad/s\n"
             f"System-calculated duration: {duration:.2f} s\n\n"
-            "Confirm that the workspace is clear and the emergency stop "
-            "is within reach."
+            "Keep the workspace clear and the emergency stop within reach."
         )
 
-        self._show_confirm_dialog(
-            message,
-            lambda: self._send_trajectory_goal(
-                target_positions,
-                duration,
-                pose_name,
-            ),
+        self._set_status(message, self.STATUS_INFO)
+        self._send_trajectory_goal(
+            target_positions,
+            duration,
+            pose_name,
         )
-
-    def _show_confirm_dialog(self, message, on_confirm):
-        """在呼叫傳送回呼前顯示最後一道安全確認。"""
-        self._dismiss_confirm_dialog()
-
-        def _handle_ok(dialog):
-            """關閉對話方塊，並繼續執行已核准的操作。"""
-            dialog.hide()
-            self._confirm_dialog = None
-            on_confirm()
-
-        def _handle_cancel(dialog):
-            """關閉對話方塊，並回報未傳送任何目標。"""
-            dialog.hide()
-            self._confirm_dialog = None
-            self._set_status(
-                "Physical execution cancelled by the user.",
-                self.STATUS_INFO,
-            )
-
-        self._confirm_dialog = (
-            omni.kit.window.popup_dialog.MessageDialog(
-                title="Confirm Physical UR3 Motion",
-                message=message,
-                ok_label="Execute",
-                cancel_label="Cancel",
-                ok_handler=_handle_ok,
-                cancel_handler=_handle_cancel,
-            )
-        )
-        self._confirm_dialog.show()
-
-    def _dismiss_confirm_dialog(self):
-        """隱藏並釋放目前的確認對話方塊（若存在）。"""
-        dialog = self._confirm_dialog
-        if dialog is None:
-            return
-
-        self._confirm_dialog = None
-        try:
-            dialog.hide()
-        except Exception:
-            pass
 
     def _show_motion_warning(self, message):
         """顯示實機未正常完成運動的模態警告。"""
@@ -837,7 +789,7 @@ class Ur3SyncExtension(omni.ext.IExt):
         pose_name,
     ):
         """建立並非同步傳送一個單點軌跡目標。"""
-        # The server may become unavailable while the dialog is open.
+        # Recheck defensively in case server state changed after validation.
         if self.client is None or not self.client.server_is_ready():
             self._set_status(
                 f"Action server is not ready: {self.ACTION_NAME}",
@@ -865,11 +817,6 @@ class Ur3SyncExtension(omni.ext.IExt):
         self.speed_slider.enabled = False
         self.stop_btn.enabled = False
         self._active_pose_name = pose_name
-
-        self._set_status(
-            f"Sending pose '{pose_name}' to the trajectory controller...",
-            self.STATUS_INFO,
-        )
 
         try:
             self._send_future = self.client.send_goal_async(goal)
@@ -1088,7 +1035,6 @@ class Ur3SyncExtension(omni.ext.IExt):
     def on_shutdown(self):
         """取消作用中的工作，並釋放介面與 ROS 資源。"""
         carb.log_info("[UR3 Sync] Extension shutting down")
-        self._dismiss_confirm_dialog()
         self._dismiss_warning_dialog()
 
         # Best-effort cancellation reduces the risk of unmanaged motion.
