@@ -9,17 +9,16 @@ UR3。
 1. 選擇一個 Robot Poser 命名姿勢（Named Pose）。
 2. 載入並驗證其 IK 結果。
 3. 檢查六個目標關節位置。
-4. 在 Timeline 持續播放時，使用獨立的規劃用 UR3 預覽一次關節空間運動。
-5. 確認實機回授用 UR3 持續同步 `/joint_states`。
-6. 確認運動內容。
-7. 將一個 `FollowJointTrajectory` 目標傳送至機器人控制器。
+4. 確認實機回授用 UR3 持續同步 `/joint_states`。
+5. 確認運動內容。
+6. 將一個 `FollowJointTrajectory` 目標傳送至機器人控制器。
 
 本 Extension **不會**將 Isaac Sim 的關節位置持續鏡像或串流至實體機器人。
 
 > [!WARNING]
 > 本 Extension 會控制實體硬體。測試時請降低速度、清空機器人的完整工作空間，
 > 並確保可立即操作緊急停止按鈕。實機執行期間，介面中的
-> **Stop Preview / Cancel Goal** 按鈕只會提出 ROS 2 Action 取消要求；它不是
+> **Cancel Goal** 按鈕只會提出 ROS 2 Action 取消要求；它不是
 > 通過安全認證的停止裝置，也不能取代機器人的實體緊急停止按鈕。
 
 ## 功能
@@ -34,17 +33,10 @@ UR3。
   請在執行前將 Timeline 設為 **Play**。
 - 提供 `0.05-3.14 rad/s` 的關節速度滑桿（預設 `0.5 rad/s`），並根據最大
   關節位移自動計算軌跡時間。
-- 啟用實機執行前，要求使用目前姿勢、目標姿勢及所選速度，在 Isaac Sim
-  中完成一次預覽。
 - 執行期間監控實體關節回授。如果尚未到達目標便停止移動，會顯示警告
   對話框並自動要求取消軌跡。
 - 軌跡控制器中止或執行失敗時，也會顯示相同的警告。
 - 顯示目標接受、完成、取消及控制器錯誤狀態。
-
-> [!CAUTION]
-> Isaac Sim 預覽只是視覺化的線性關節空間播放。它可以協助操作員發現明顯的
-> 地面或場景物件穿插，但不是無碰撞路徑規劃器、經認證的碰撞檢查，也不提供
-> 任何安全保證。
 
 ## Timeline 操作規則
 
@@ -53,14 +45,13 @@ UR3。
 | 階段 | Isaac Sim Timeline | 原因 |
 | --- | --- | --- |
 | 編輯 Robot Poser 目標 | **Play** | Robot Poser 只操作規劃用 UR3，不會與實機回授用 UR3 衝突。 |
-| 在 Isaac Sim 中規劃／預覽 | **Play** | Extension 以應用程式更新事件推進規劃用 UR3 的預覽，不會停止 Timeline。 |
 | 在實體 UR3 上執行 | **Play** | Action Graph 將實機的 `/joint_states` 套用至實機回授用 UR3。 |
 
 Extension 內部的 ROS 2 subscriber 會持續接收實機 `/joint_states`，用於
-計算時間與起始姿勢，以及執行停滯和最終位置檢查。
+計算軌跡時間，以及執行停滯和最終位置檢查。
 
 > [!IMPORTANT]
-> 請讓 Timeline 全程保持 **Play**，並確認 Robot Poser／預覽與
+> 請讓 Timeline 全程保持 **Play**，並確認 Robot Poser 與
 > 實機回授 Action Graph 操作不同的 UR3。實機執行期間，請同時
 > 比較模擬手臂、實體手臂、目標關節值及 Status 結果。畫面一致是有用的操作
 > 依據，但不能取代控制器結果或實體安全檢查。
@@ -180,12 +171,11 @@ cd /home/spatiallabs/isaacsim
 4. 在 **UR3 Robot Poser Execution** 中按下 **Refresh**。
 5. 選擇命名姿勢，然後按下 **Load and Validate IK Solution**。
 6. 檢查六個目標關節值，並選擇合適的關節速度上限。
-7. 按下 **Plan / Preview Once in Isaac Sim**，觀察完整路徑。
-8. 確認實機回授用 UR3 在執行期間跟隨 Mock `/joint_states`。
-9. 按下 **Execute on Physical UR3**。Mock 模式中的按鈕仍會使用此名稱，
+7. 確認實機回授用 UR3 在執行期間跟隨 Mock `/joint_states`。
+8. 按下 **Execute on Physical UR3**。Mock 模式中的按鈕仍會使用此名稱，
    但目標只會傳送至 Mock controller，不會移動實體機器人。
-10. 檢查確認對話框，然後按下 **Execute**。
-11. 確認 UI 先顯示目標已接受，接著顯示成功完成。
+9. 檢查確認對話框，然後按下 **Execute**。
+10. 確認 UI 先顯示目標已接受，接著顯示成功完成。
 
 ### 5. 驗證 Mock 結果並停止 driver
 
@@ -196,7 +186,7 @@ ros2 topic echo /joint_states --once
 ```
 
 最終數值應接近 Extension 顯示的目標值。也可以使用時間較長的目標，測試
-**Stop Preview / Cancel Goal**。測試完成後，關閉 Isaac Sim，並在終端機 1
+**Cancel Goal**。測試完成後，關閉 Isaac Sim，並在終端機 1
 中按下 `Ctrl+C` 停止 Mock driver。
 
 ## 逐步操作：搭配實體 UR3 執行
@@ -233,8 +223,8 @@ ros2 topic echo /joint_states --once
 - 第一個目標只能使用小幅度位移，並遠離關節限制、桌面、人員及障礙物。
 
 > [!CAUTION]
-> 本 Extension 的預覽不會執行碰撞檢查、完整關節限制檢查、無碰撞路徑規劃，
-> 也不是通過安全認證的停止功能。執行本實機流程前，必須先完成 Mock Hardware
+> 本 Extension 不會執行碰撞檢查、完整關節限制檢查或無碰撞路徑規劃，
+> 也不提供通過安全認證的停止功能。執行本實機流程前，必須先完成 Mock Hardware
 > 測試。
 
 ### 2. 所有終端機使用相同的 ROS Domain
@@ -384,8 +374,8 @@ Extension，請確認下列檔案存在：
 4. 讓 Timeline 保持 **Play**。
 
 編輯 Robot Poser 目標時，Timeline 保持 **Play**。Action Graph 必須只將
-`/joint_states` 寫入實機回授用 UR3，Robot Poser 與本 Extension 的預覽則只
-操作規劃用 UR3。如果規劃用 UR3 被拉回實機位置，請修正 Action Graph
+`/joint_states` 寫入實機回授用 UR3，Robot Poser 則只操作規劃用 UR3。
+如果規劃用 UR3 被拉回實機位置，請修正 Action Graph
 的 articulation 目標，不要停止 Timeline。
 
 ### 10. 使用 Robot Poser 建立小幅度命名姿勢
@@ -415,14 +405,10 @@ Extension 顯示確認對話框，且使用者確認執行之後，實體機器�
 3. 按下 **Load and Validate IK Solution**。
 4. 確認 UI 顯示六個以弧度為單位的有限關節值。
 5. 第一次實機測試時，將 **Joint speed limit** 設為最小值 `0.05 rad/s`。
-6. 按下 **Plan / Preview Once in Isaac Sim**。Extension 會在 Timeline 持續
-   播放時，驅動獨立的規劃用 UR3 進行預覽。
-7. 觀察從實體手臂目前關節位置移動至目標的完整過程。如果任何連桿看起來會
-   穿過地面或其他場景物件，請勿執行實體運動。
-8. 確認 Timeline 仍為 **Play**，且實機回授用 UR3 仍從實體
+6. 確認 Timeline 仍為 **Play**，且實機回授用 UR3 仍從實體
    `/joint_states` 持續更新。
-9. 按下 **Execute on Physical UR3** 開啟確認對話框，但先不要確認。
-10. 檢查目標關節、實機目前位置至目標的最大位移、方向及軌跡時間。
+7. 按下 **Execute on Physical UR3** 開啟確認對話框，但先不要確認。
+8. 檢查目標關節、實機目前位置至目標的最大位移、方向及軌跡時間。
 
 第一次測試時，最大關節位移不可超過 `0.05 rad`（約 `2.9 度`）。如果超過，
 請按下 **Cancel** 並建立較小的目標。這是保守的功能測試數值，不是經認證的
@@ -439,10 +425,6 @@ Extension 會比較最近一次收到的實體關節位置與目標，並計算�
 較低的一個：肩部／肘部關節額定速度為 `180 度/s`，腕部關節則為
 `360 度/s`。使用這個共同上限，可確保單一滑桿值對每一個關節都有效。Teach
 Pendant 速度滑桿與 UR scaled trajectory controller 可能進一步降低實際速度。
-
-目前目標及速度必須完成預覽，實機執行按鈕才會啟用。變更命名姿勢或速度都會
-使該次預覽核准失效。如果預覽開始後，實體手臂的任何關節移動超過
-`0.02 rad`，也會禁止實機執行。
 
 Timeline 未開始播放時，Extension 仍允許開啟確認對話框並送出軌跡。
 此時 Extension 仍會直接接收 ROS 2 `/joint_states` 用於執行監控，但模擬
@@ -468,7 +450,7 @@ Pose 'physical_verify_small_move' completed successfully.
 
 請在整個運動期間持續觀察實體手臂。如果方向、速度、聲音或姿勢不如預期，
 請立即使用 Teach Pendant 的安全停止功能或實體緊急停止按鈕。
-**Stop Preview / Cancel Goal** 在實機執行期間只會提出 ROS 2 Action 取消要求；
+**Cancel Goal** 在實機執行期間只會提出 ROS 2 Action 取消要求；
 它不是通過安全認證的停止功能，也不能取代緊急停止按鈕。
 
 ### 13. 驗證結果

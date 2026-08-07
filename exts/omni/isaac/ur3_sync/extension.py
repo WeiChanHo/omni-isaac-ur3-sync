@@ -23,7 +23,6 @@ from sensor_msgs.msg import JointState
 from trajectory_msgs.msg import JointTrajectoryPoint
 
 from isaacsim.robot.poser import (
-    apply_joint_state_anchored,
     get_named_pose,
     list_named_poses,
 )
@@ -36,8 +35,6 @@ class Ur3SyncExtension(omni.ext.IExt):
     JOINT_STATE_TOPIC = "/joint_states"
 
     ROBOT_PRIM_PATH = "/World/ur3"
-    BASE_PRIM_PATH = f"{ROBOT_PRIM_PATH}/base_link"
-    FLANGE_PRIM_PATH = f"{ROBOT_PRIM_PATH}/wrist_3_link/flange"
 
     # UR3 data-sheet limits (feedback/ur3_us.pdf): the three arm joints are
     # rated for 180 deg/s and the three wrist joints for 360 deg/s.  The UI
@@ -55,7 +52,6 @@ class Ur3SyncExtension(omni.ext.IExt):
     MAX_COMMAND_SPEED = min(UR3_RATED_JOINT_SPEEDS)
     DEFAULT_COMMAND_SPEED = 0.5
     MIN_TRAJECTORY_DURATION = 0.1
-    PREVIEW_START_TOLERANCE = 0.02
 
     # Feedback-based stall detection. This identifies a lack of progress; the
     # UR controller remains authoritative about collisions/Protective Stops.
@@ -85,19 +81,7 @@ class Ur3SyncExtension(omni.ext.IExt):
         self._updating_pose_combo = False
         self._pending_pose_name = None
         self._pending_positions = None
-        self._pending_joint_paths = None
         self._hardware_positions = None
-
-        self._is_previewing = False
-        self._preview_start_time = None
-        self._preview_duration = None
-        self._preview_speed = None
-        self._preview_start_positions = None
-        self._preview_target_positions = None
-        self._previewed_pose_name = None
-        self._previewed_positions = None
-        self._previewed_speed = None
-        self._previewed_start_positions = None
 
         self._send_future = None
         self._result_future = None
@@ -193,7 +177,6 @@ class Ur3SyncExtension(omni.ext.IExt):
 
         if self._hardware_positions is not None:
             self._monitor_execution_stall(self._hardware_positions)
-        self._advance_preview()
 
     # ------------------------------------------------------------------
     # 實機執行監控
@@ -412,18 +395,6 @@ class Ur3SyncExtension(omni.ext.IExt):
                     style={"font_size": 12, "color": 0xFFBBBBBB},
                 )
 
-                self.preview_btn = ui.Button(
-                    "Plan / Preview Once in Isaac Sim",
-                    height=34,
-                    clicked_fn=self._on_preview_clicked,
-                    tooltip=(
-                        "Play a kinematic joint-space preview in Isaac Sim. "
-                        "This is a visual check, not certified collision "
-                        "checking."
-                    ),
-                )
-                self.preview_btn.enabled = False
-
                 with ui.HStack(height=40, spacing=10):
                     self.execute_btn = ui.Button(
                         "Execute on Physical UR3",
@@ -432,7 +403,7 @@ class Ur3SyncExtension(omni.ext.IExt):
                     self.execute_btn.enabled = False
 
                     self.stop_btn = ui.Button(
-                        "Stop Preview / Cancel Goal",
+                        "Cancel Goal",
                         clicked_fn=self._on_stop_clicked,
                     )
                     self.stop_btn.enabled = False
@@ -469,21 +440,6 @@ class Ur3SyncExtension(omni.ext.IExt):
         speed = float(model.get_value_as_float())
         if getattr(self, "speed_value_label", None) is not None:
             self.speed_value_label.text = self._format_speed(speed)
-
-        if self._is_previewing:
-            self._cancel_preview(restore_start=True)
-            self._set_status(
-                "Speed changed. The simulation preview was cancelled; "
-                "preview the motion again.",
-                self.STATUS_WARN,
-            )
-        elif self._previewed_pose_name is not None:
-            self._clear_preview_approval()
-            self._set_status(
-                "Speed changed. Preview the motion again before physical "
-                "execution.",
-                self.STATUS_INFO,
-            )
 
     def _get_command_speed(self):
         """讀取並防禦性限制使用者所選的關節速度。"""
@@ -623,18 +579,11 @@ class Ur3SyncExtension(omni.ext.IExt):
 
     def _invalidate_pending_solution(self):
         """清除已驗證目標，並停用實體執行。"""
-        if self._is_previewing:
-            self._cancel_preview(restore_start=True)
-
         self._pending_pose_name = None
         self._pending_positions = None
-        self._pending_joint_paths = None
-        self._clear_preview_approval()
 
         if getattr(self, "execute_btn", None) is not None:
             self.execute_btn.enabled = False
-        if getattr(self, "preview_btn", None) is not None:
-            self.preview_btn.enabled = False
         if getattr(self, "solution_label", None) is not None:
             self.solution_label.text = "No IK solution loaded."
 
@@ -664,13 +613,11 @@ class Ur3SyncExtension(omni.ext.IExt):
 
         # Pose joints are stored by prim path; the controller expects names.
         positions_by_name = {}
-        joint_paths_by_name = {}
         for joint_path, value in pose.joints.items():
             joint_prim = stage.GetPrimAtPath(joint_path)
             if joint_prim.IsValid():
                 joint_name = joint_prim.GetName()
                 positions_by_name[joint_name] = float(value)
-                joint_paths_by_name[joint_name] = str(joint_path)
 
         missing = [
             name
@@ -687,23 +634,13 @@ class Ur3SyncExtension(omni.ext.IExt):
             positions_by_name[name]
             for name in self.ur_joint_names
         ]
-        joint_paths = [
-            joint_paths_by_name[name]
-            for name in self.ur_joint_names
-        ]
         if not all(math.isfinite(value) for value in positions):
             raise RuntimeError("IK result contains NaN or infinite values")
 
-        return positions, joint_paths
+        return positions
 
     def _on_load_clicked(self):
         """驗證所選 IK 姿勢，並使其可供執行。"""
-        if self._is_previewing:
-            self._set_status(
-                "Stop the Isaac Sim preview before loading another pose.",
-                self.STATUS_WARN,
-            )
-            return
         if self._is_executing:
             self._set_status(
                 "Cannot load another pose while a trajectory is executing.",
@@ -720,9 +657,7 @@ class Ur3SyncExtension(omni.ext.IExt):
             return
 
         try:
-            positions, joint_paths = self._load_named_pose_positions(
-                pose_name
-            )
+            positions = self._load_named_pose_positions(pose_name)
         except Exception as exc:
             self._invalidate_pending_solution()
             self._set_status(str(exc), self.STATUS_ERROR)
@@ -730,10 +665,7 @@ class Ur3SyncExtension(omni.ext.IExt):
 
         self._pending_pose_name = pose_name
         self._pending_positions = positions
-        self._pending_joint_paths = joint_paths
-        self._clear_preview_approval()
-        self.preview_btn.enabled = True
-        self.execute_btn.enabled = False
+        self.execute_btn.enabled = True
 
         formatted = "  ".join(
             f"{name.replace('_joint', '')}={value:+.3f}"
@@ -744,242 +676,10 @@ class Ur3SyncExtension(omni.ext.IExt):
             f"Joint positions (rad): {formatted}"
         )
         self._set_status(
-            "IK solution loaded and validated. Run the Isaac Sim preview "
+            "IK solution loaded and validated. Review the target joints "
             "before physical execution.",
             self.STATUS_OK,
         )
-
-    # ------------------------------------------------------------------
-    # Isaac Sim 運動預覽
-    # ------------------------------------------------------------------
-
-    def _clear_preview_approval(self):
-        """清除允許實機執行的預覽快照。"""
-        self._previewed_pose_name = None
-        self._previewed_positions = None
-        self._previewed_speed = None
-        self._previewed_start_positions = None
-        if getattr(self, "execute_btn", None) is not None:
-            self.execute_btn.enabled = False
-
-    def _apply_simulated_positions(self, positions):
-        """以 FK 將關節狀態套用到規劃用模擬 UR3。"""
-        stage = omni.usd.get_context().get_stage()
-        if stage is None:
-            raise RuntimeError("No active USD stage")
-
-        robot_prim = stage.GetPrimAtPath(self.ROBOT_PRIM_PATH)
-        base_prim = stage.GetPrimAtPath(self.BASE_PRIM_PATH)
-        if not robot_prim.IsValid():
-            raise RuntimeError(
-                f"Robot prim not found: {self.ROBOT_PRIM_PATH}"
-            )
-        if not base_prim.IsValid():
-            raise RuntimeError(
-                f"Robot base prim not found: {self.BASE_PRIM_PATH}"
-            )
-        if self._pending_joint_paths is None:
-            raise RuntimeError("No validated joint paths are available")
-
-        joint_state = {
-            path: float(position)
-            for path, position in zip(
-                self._pending_joint_paths,
-                positions,
-            )
-        }
-        apply_joint_state_anchored(
-            stage,
-            robot_prim,
-            joint_state,
-            base_prim,
-        )
-
-    def _reset_active_preview_state(self):
-        """清除正在播放的模擬預覽狀態。"""
-        self._is_previewing = False
-        self._preview_start_time = None
-        self._preview_duration = None
-        self._preview_speed = None
-        self._preview_start_positions = None
-        self._preview_target_positions = None
-
-    def _cancel_preview(self, restore_start):
-        """取消模擬預覽，並選擇性還原預覽起點。"""
-        start_positions = self._preview_start_positions
-        if restore_start and start_positions is not None:
-            try:
-                self._apply_simulated_positions(start_positions)
-            except Exception as exc:
-                carb.log_warn(
-                    "[UR3 Sync] Failed to restore preview start pose: "
-                    f"{exc}"
-                )
-
-        self._reset_active_preview_state()
-        self._clear_preview_approval()
-        if getattr(self, "preview_btn", None) is not None:
-            self.preview_btn.enabled = (
-                self._pending_positions is not None
-                and not self._is_executing
-            )
-        if getattr(self, "stop_btn", None) is not None:
-            self.stop_btn.enabled = self._goal_handle is not None
-
-    def _on_preview_clicked(self):
-        """從實機目前姿勢播放一次同速的 Isaac Sim 關節預覽。"""
-        if self._is_executing:
-            self._set_status(
-                "Cannot preview while the physical robot is executing.",
-                self.STATUS_WARN,
-            )
-            return
-        if self._is_previewing:
-            self._set_status(
-                "A simulation preview is already running.",
-                self.STATUS_WARN,
-            )
-            return
-        if (
-            self._pending_pose_name is None
-            or self._pending_positions is None
-            or self._pending_joint_paths is None
-        ):
-            self._set_status(
-                "Load and validate an IK solution first.",
-                self.STATUS_ERROR,
-            )
-            return
-        if self._hardware_positions is None:
-            self._set_status(
-                "No valid /joint_states received from the physical UR3. "
-                "The preview needs the real starting pose.",
-                self.STATUS_ERROR,
-            )
-            return
-
-        speed = self._get_command_speed()
-        start_positions = list(self._hardware_positions)
-        target_positions = list(self._pending_positions)
-        _, duration = self._calculate_motion_duration(
-            start_positions,
-            target_positions,
-            speed,
-        )
-
-        self._clear_preview_approval()
-        self._preview_start_positions = start_positions
-        self._preview_target_positions = target_positions
-        self._preview_duration = duration
-        self._preview_speed = speed
-        self._preview_start_time = time.perf_counter()
-        self._is_previewing = True
-        self.preview_btn.enabled = False
-        self.stop_btn.enabled = True
-
-        try:
-            self._apply_simulated_positions(start_positions)
-        except Exception as exc:
-            self._cancel_preview(restore_start=False)
-            self._set_status(
-                f"Failed to start the Isaac Sim preview: {exc}",
-                self.STATUS_ERROR,
-            )
-            return
-
-        self._set_status(
-            f"Previewing pose '{self._pending_pose_name}' in Isaac Sim "
-            f"for {duration:.2f} s while the Timeline keeps playing.",
-            self.STATUS_INFO,
-        )
-
-    def _advance_preview(self):
-        """依應用程式時間推進一次線性關節空間預覽。"""
-        if not self._is_previewing:
-            return
-
-        elapsed = time.perf_counter() - self._preview_start_time
-        progress = min(1.0, elapsed / self._preview_duration)
-        positions = [
-            start + (target - start) * progress
-            for start, target in zip(
-                self._preview_start_positions,
-                self._preview_target_positions,
-            )
-        ]
-        try:
-            self._apply_simulated_positions(positions)
-        except Exception as exc:
-            self._cancel_preview(restore_start=True)
-            self._set_status(
-                f"Isaac Sim preview failed: {exc}",
-                self.STATUS_ERROR,
-            )
-            return
-        if progress < 1.0:
-            return
-
-        self._previewed_pose_name = self._pending_pose_name
-        self._previewed_positions = tuple(
-            self._preview_target_positions
-        )
-        self._previewed_speed = self._preview_speed
-        self._previewed_start_positions = tuple(
-            self._preview_start_positions
-        )
-        duration = self._preview_duration
-        self._reset_active_preview_state()
-        self.preview_btn.enabled = True
-        self.execute_btn.enabled = True
-        self.stop_btn.enabled = False
-        self._set_status(
-            f"Isaac Sim preview completed in {duration:.2f} s. This was "
-            "a visual joint-space preview, not certified collision "
-            "checking. Execute only if the entire path was clear.",
-            self.STATUS_OK,
-        )
-
-    def _preview_matches_current_request(self, speed):
-        """確認目標、速度與實機起點仍與完成的預覽相同。"""
-        if (
-            self._pending_pose_name is None
-            or self._pending_positions is None
-            or self._previewed_pose_name is None
-            or self._previewed_positions is None
-            or self._previewed_speed is None
-        ):
-            return False, "The current motion has not been previewed."
-        if self._previewed_pose_name != self._pending_pose_name:
-            return False, "The selected pose has not been previewed."
-        if self._previewed_positions != tuple(self._pending_positions):
-            return False, "The target joints changed after the preview."
-        if not math.isclose(
-            self._previewed_speed,
-            speed,
-            rel_tol=0.0,
-            abs_tol=1e-6,
-        ):
-            return False, "The speed changed after the preview."
-        if (
-            self._hardware_positions is None
-            or self._previewed_start_positions is None
-        ):
-            return False, "The physical starting pose is unavailable."
-
-        start_drift = max(
-            abs(current - previewed)
-            for current, previewed in zip(
-                self._hardware_positions,
-                self._previewed_start_positions,
-            )
-        )
-        if start_drift > self.PREVIEW_START_TOLERANCE:
-            return (
-                False,
-                "The physical arm moved after the preview "
-                f"({start_drift:.3f} rad maximum drift).",
-            )
-        return True, ""
 
     # ------------------------------------------------------------------
     # 確認與軌跡執行
@@ -987,12 +687,6 @@ class Ur3SyncExtension(omni.ext.IExt):
 
     def _on_execute_clicked(self):
         """檢查執行前提，並要求使用者確認。"""
-        if self._is_previewing:
-            self._set_status(
-                "Wait for the Isaac Sim preview to finish or stop it first.",
-                self.STATUS_WARN,
-            )
-            return
         if self._is_executing:
             self._set_status(
                 "A trajectory is already executing.",
@@ -1026,19 +720,6 @@ class Ur3SyncExtension(omni.ext.IExt):
             return
 
         speed = self._get_command_speed()
-        preview_matches, reason = self._preview_matches_current_request(
-            speed
-        )
-        if not preview_matches:
-            self._clear_preview_approval()
-            self.preview_btn.enabled = True
-            self._set_status(
-                f"Physical execution blocked: {reason} Preview the motion "
-                "again.",
-                self.STATUS_ERROR,
-            )
-            return
-
         max_delta, duration = self._calculate_motion_duration(
             self._hardware_positions,
             self._pending_positions,
@@ -1178,11 +859,9 @@ class Ur3SyncExtension(omni.ext.IExt):
         )
         goal.trajectory.points.append(point)
 
-        # A completed preview authorizes only one physical goal attempt.
-        self._clear_preview_approval()
         self._active_target_positions = list(target_positions)
         self._is_executing = True
-        self.preview_btn.enabled = False
+        self.execute_btn.enabled = False
         self.speed_slider.enabled = False
         self.stop_btn.enabled = False
         self._active_pose_name = pose_name
@@ -1316,15 +995,6 @@ class Ur3SyncExtension(omni.ext.IExt):
 
     def _on_stop_clicked(self):
         """要求取消目前已接受的軌跡目標。"""
-        if self._is_previewing:
-            self._cancel_preview(restore_start=True)
-            self._set_status(
-                "Isaac Sim preview stopped and the simulated UR3 was "
-                "returned to the preview start pose.",
-                self.STATUS_INFO,
-            )
-            return
-
         if self._goal_handle is None:
             self._set_status(
                 "There is no accepted trajectory goal to cancel.",
@@ -1405,11 +1075,7 @@ class Ur3SyncExtension(omni.ext.IExt):
         self._reset_execution_watchdog()
 
         if getattr(self, "execute_btn", None) is not None:
-            self.execute_btn.enabled = False
-        if getattr(self, "preview_btn", None) is not None:
-            self.preview_btn.enabled = (
-                self._pending_positions is not None
-            )
+            self.execute_btn.enabled = self._pending_positions is not None
         if getattr(self, "speed_slider", None) is not None:
             self.speed_slider.enabled = True
         if getattr(self, "stop_btn", None) is not None:
@@ -1425,8 +1091,6 @@ class Ur3SyncExtension(omni.ext.IExt):
         self._dismiss_confirm_dialog()
         self._dismiss_warning_dialog()
 
-        if self._is_previewing:
-            self._cancel_preview(restore_start=True)
         # Best-effort cancellation reduces the risk of unmanaged motion.
         if self._goal_handle is not None:
             carb.log_warn(

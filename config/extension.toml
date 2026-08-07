@@ -1,7 +1,7 @@
 [package]
 name = "omni.isaac.ur3_sync"
 title = "UR3 Robot Poser Executor"
-description = "Previews and validates Robot Poser named-pose IK results before executing them on a physical UR3 through ROS 2"
+description = "Validates Robot Poser named-pose IK results before executing them on a physical UR3 through ROS 2"
 version = "1.3.2"
 category = "Robotics"
 keywords = ["isaacsim", "robotics", "ros2", "ur3"]
