@@ -5,13 +5,13 @@ import unittest
 from pathlib import Path
 
 
-EXTENSION_PATH = (
+UI_WORKFLOW_PATH = (
     Path(__file__).resolve().parents[1]
     / "exts"
     / "omni"
     / "isaac"
     / "ur3_sync"
-    / "extension.py"
+    / "ui_workflow.py"
 )
 
 
@@ -32,7 +32,7 @@ def _assigned_attributes(nodes):
 
 class UiLayoutTests(unittest.TestCase):
     def test_target_source_buttons_share_horizontal_row(self):
-        tree = ast.parse(EXTENSION_PATH.read_text(encoding="utf-8"))
+        tree = ast.parse(UI_WORKFLOW_PATH.read_text(encoding="utf-8"))
         build_ui = next(
             node
             for node in ast.walk(tree)
