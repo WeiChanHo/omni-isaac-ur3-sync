@@ -5,7 +5,7 @@ Poser 已儲存的 Named Pose，或擷取規劃用模擬 UR3 當下真正到達�
 然後透過 ROS 2 `FollowJointTrajectory` Action 將**一個單點軌跡目標**傳送給
 Universal Robots UR3 的 trajectory controller。
 
-目前 Extension 版本為 `1.4.0`。
+目前 Extension 版本為 `1.5.0`。
 
 > [!WARNING]
 > 這個 Extension 可以控制實體機器人，但它不是安全控制器。`Cancel Goal`
@@ -17,15 +17,16 @@ Universal Robots UR3 的 trajectory controller。
 
 1. 啟動一個名為 `isaacsim_ur3_sync_extension` 的 ROS 2 node。
 2. 訂閱 `/joint_states`，依固定的 UR3 關節順序快取最近一筆完整且有限的關節角。
-3. 提供兩種目標來源：載入 `/World/ur3` 的 Robot Poser Named Pose，或在
-   Timeline Play 時按 **Get Current Simulation Pose** 擷取該 articulation 的
-   PhysX 實際關節角。
-4. 將目標依 controller 的六軸順序排列，確認資料完整且數值有限。
-5. 將按鈕當下的目標保存為快照；後續模擬手臂移動不會改變這筆目標。
-6. 以目前實機關節角、目標關節角與使用者速度上限計算軌跡時間。
-7. 將一個 `FollowJointTrajectory` goal 非同步傳送到
+3. 掃描目前 Stage 中具有 `IsaacRobotAPI`、且不位於 prototype 內的 robot prim，
+   讓操作員以完整 prim path 選擇 **Active Robot**。
+4. 提供兩種目標來源：載入 Active Robot 的 Robot Poser Named Pose，或在 Timeline
+   Play 時按 **Get Current Simulation Pose** 擷取該 articulation 的 PhysX 實際關節角。
+5. 將目標依 controller 的六軸順序排列，確認資料完整且數值有限。
+6. 將按鈕當下的目標保存為快照；後續模擬手臂移動不會改變這筆目標。
+7. 以目前實機關節角、目標關節角與使用者速度上限計算軌跡時間。
+8. 將一個 `FollowJointTrajectory` goal 非同步傳送到
    `/scaled_joint_trajectory_controller/follow_joint_trajectory`。
-8. 以 Action result 判定成功、取消或失敗；執行中則用 `/joint_states` 偵測疑似
+9. 以 Action result 判定成功、取消或失敗；執行中則用 `/joint_states` 偵測疑似
    停滯，必要時顯示警告並自動要求取消。
 
 ### 目前不做的事
@@ -53,15 +54,17 @@ flowchart LR
         Init["__init__.py<br/>匯出 Extension class"]
         Ext["extension.py<br/>Ur3SyncExtension"]
         Normalize["joint_targets.py<br/>六軸排序與數值驗證"]
+        Selection["robot_selection.py<br/>robot 排序與選擇保留規則"]
         Scene["scenes/real2sim_ur3_dev.usd<br/>開發場景資產"]
         Manifest --> Init --> Ext
         Ext --> Normalize
+        Ext --> Selection
     end
 
-    RobotPoser["Isaac Sim Robot Poser<br/>求解並儲存 Named Pose"] --> Stage["目前開啟的 USD Stage<br/>/World/ur3"]
+    RobotPoser["Isaac Sim Robot Poser<br/>求解並儲存 Named Pose"] --> Stage["目前開啟的 USD Stage<br/>IsaacRobotAPI robots"]
     Scene -.->|"可由使用者開啟；不會自動載入"| Stage
     Stage -->|"Named Pose / joint prim paths"| Ext
-    Stage --> PlanningArm["PhysX planning articulation<br/>/World/ur3"]
+    Stage --> PlanningArm["PhysX planning articulation<br/>selected Active Robot"]
     PlanningArm -->|"Get Current: actual DOF positions"| Ext
     UI -->|"Refresh / Load / Get Current / Execute / Cancel"| Ext
     Ext -->|"狀態與按鈕啟用狀態"| UI
@@ -88,7 +91,8 @@ flowchart LR
 | `exts/omni/isaac/ur3_sync/__init__.py` | 重新匯出 `extension.py` 的內容 | 讓 Kit 找到 `Ur3SyncExtension` |
 | `exts/omni/isaac/ur3_sync/extension.py` | UI、兩種目標來源、ROS 2 node、Action client、取消與 stall watchdog | 讀取 Stage／PhysX articulation，接收 `/joint_states`，呼叫 controller Action |
 | `exts/omni/isaac/ur3_sync/joint_targets.py` | 將 articulation DOF 重新排列成固定六軸順序並驗證數值 | 由 Get Current 呼叫；不依賴 Isaac Sim，能以一般 Python 測試 |
-| `scenes/real2sim_ur3_dev.usd` | 開發用 USD 場景／覆寫層 | 程式不會自動開啟它；Extension 一律操作使用者目前已開啟 Stage 的 `/World/ur3` |
+| `exts/omni/isaac/ur3_sync/robot_selection.py` | 排序 robot paths、保留有效舊選擇、初次偏好 `/World/ur3`、否則回到 `None` | 不依賴 Isaac Sim，供 Active Robot 重掃與一般 Python 測試使用 |
+| `scenes/real2sim_ur3_dev.usd` | 開發用 USD 場景／覆寫層 | 程式不會自動開啟它；Extension 操作目前 Stage 中使用者選取的 Active Robot |
 | `feedback/` | UR3 datasheet 與開發回饋 | 不會在 runtime 載入；datasheet 是目前速度上限註解的依據 |
 | `weekly_report_0801/` | 歷史報告與畫面 | 不參與 runtime，內容可能早於目前實作 |
 
@@ -98,7 +102,7 @@ flowchart LR
 | --- | --- |
 | 生命週期與 ROS 初始化 | `on_startup`、`_initialize_ros`、`on_shutdown` |
 | ROS 回授與 Kit event pump | `_on_joint_state`、`_on_app_update` |
-| UI 與 Named Pose 選擇 | `_build_ui`、`_refresh_pose_names`、`_on_pose_selection_changed` |
+| Stage lifecycle、Active Robot 與 Named Pose 選擇 | `_subscribe_stage_events`、`_refresh_robots_and_poses`、`_refresh_pose_names` |
 | IK 結果載入與驗證 | `_load_named_pose_positions`、`_on_load_clicked` |
 | 模擬姿勢擷取 | `_read_current_simulation_positions`、`_on_get_current_clicked` |
 | 軌跡 Action 與監控 | `_on_execute_clicked`、`_send_trajectory_goal`、goal/result/cancel callbacks、stall watchdog |
@@ -124,7 +128,7 @@ sequenceDiagram
     Ext->>ROS: 建立 ActionClient 與 /joint_states subscription
     Ext->>Kit: 訂閱 app update event
     Ext->>UI: 建立 UR3 Robot Poser Execution 視窗
-    Ext->>Stage: 尋找 /World/ur3 與 Named Poses
+    Ext->>Stage: 掃描 IsaacRobotAPI robots 與 Active Robot 的 Named Poses
 
     loop 每個 Isaac Sim app update
         Kit->>Ext: _on_app_update(event)
@@ -167,11 +171,11 @@ flowchart TD
     Start["選擇目標來源"] --> Named["Load Named Pose"]
     Start --> Current["Get Current Simulation Pose"]
 
-    Named --> Pose["get_named_pose(/World/ur3)"]
+    Named --> Pose["get_named_pose(selected Active Robot)"]
     Pose --> PoseChecks{"IK success？<br/>六個 joint prim 完整？<br/>所有值有限？"}
 
     Current --> Timeline{"Timeline Play？"}
-    Timeline -- 是 --> Physics["讀取 /World/ur3<br/>PhysX actual DOF positions"]
+    Timeline -- 是 --> Physics["讀取 selected Active Robot<br/>PhysX actual DOF positions"]
     Physics --> CurrentChecks{"Physics tensor ready？<br/>六個 DOF 完整？<br/>所有值有限？"}
 
     PoseChecks -- 否 --> Reject["撤銷 pending target<br/>Execute disabled"]
@@ -183,14 +187,15 @@ flowchart TD
     Snapshot --> Review["顯示來源與六個 rad 值<br/>啟用 Execute"]
 ```
 
-會阻擋載入的條件包括：Stage 不存在、`/World/ur3` 不存在、Named Pose 不存在、
+會阻擋載入的條件包括：Stage 不存在、未選 Active Robot、所選 prim 不存在、Named Pose 不存在、
 `pose.success == False`、遺失任一預期關節，或數值含 `NaN`／無限大。切換 Pose 或
 按下 Refresh 都會清除已載入的目標，避免誤送舊資料。
 
 ### Get Current Simulation Pose
 
-Get Current 固定讀取規劃手臂 `/World/ur3`，不會讀取 Action Graph 控制的
-`/World/ur3_real2sim`。按下前必須讓 Timeline 保持 **Play**，因為程式取得的是
+Get Current 讀取目前選取的 Active Robot；預設場景通常是 `/World/ur3`，操作員不應
+誤選 Action Graph 控制的 `/World/ur3_real2sim`。按下前必須讓 Timeline 保持
+**Play**，因為程式取得的是
 PhysX 中真正到達的 DOF positions，不是 Robot Poser 的 drive targets，也不是停止
 時留在 USD attribute 的舊值。
 
@@ -312,7 +317,7 @@ goal 被接受後，watchdog 會監看六軸回授：
 | 項目 | 目前值 |
 | --- | --- |
 | ROS node | `isaacsim_ur3_sync_extension` |
-| Robot prim | `/World/ur3` |
+| Active Robot | UI 選取；初次掃描時優先 `/World/ur3`，無有效選擇時為 `None` |
 | JointState topic | `/joint_states` |
 | Trajectory Action | `/scaled_joint_trajectory_controller/follow_joint_trajectory` |
 | Subscription queue depth | `10` |
@@ -320,9 +325,9 @@ goal 被接受後，watchdog 會監看六軸回授：
 | 預設速度 | `0.5 rad/s` |
 | 最短 trajectory duration | `0.1 s` |
 
-這些路徑與數值目前是 `Ur3SyncExtension` 的 class constants，不是 UI 或 TOML
-設定。如果 ROS namespace、controller 名稱或 prim path 不同，需修改
-`extension.py` 後重新載入 Extension。
+ROS topic、Action 與速度數值目前是 `Ur3SyncExtension` 的 constants，不是 TOML
+設定。Robot prim 則由 Active Robot UI 選擇。如果 ROS namespace 或 controller
+名稱不同，需修改 `extension.py` 後重新載入 Extension。
 
 ### Extension dependencies
 
@@ -343,11 +348,15 @@ Python runtime 還會匯入 ROS 2 的 `rclpy`、`action_msgs`、`control_msgs`�
 ### Stage 前提
 
 - 使用者必須先開啟一個 USD Stage。
-- Stage 必須包含有效 prim `/World/ur3`。
-- Get Current 不需要 Named Pose，但 `/World/ur3` 必須是可在 Timeline Play 時建立
+- 候選 robot prim 必須套用 `IsaacRobotAPI`；prototype 內的 prim 不會出現在選單。
+- 初次掃描若存在 `/World/ur3` 會優先選取。之後重掃或換 Stage 只保留仍存在的舊
+  path；舊 path 不存在時顯示 `None`，不會擅自選其他 robot。
+- Get Current 不需要 Named Pose，但 Active Robot 必須是可在 Timeline Play 時建立
   physics tensor 的 articulation，且 DOF 名稱符合固定的六個 UR3 關節名稱。
-- 若使用 Named Pose 流程，Robot Poser 必須已在 `/World/ur3` 儲存成功的 Pose，
+- 若使用 Named Pose 流程，Robot Poser 必須已在 Active Robot 儲存成功的 Pose，
   且 joint prim 名稱符合相同六軸名稱。
+- Stage `OPENED`、`ASSETS_LOADED` 與手動 Refresh 都會重掃 robots；手動 Refresh
+  同時更新所選 robot 的 Named Poses 並撤銷舊 target。
 
 Repository 內的 `scenes/real2sim_ur3_dev.usd` 是開發資產，不會由 Extension 自動
 開啟。它若引用其他本機 USD／資產，開啟時也必須確保那些相依路徑可以解析。
@@ -392,13 +401,23 @@ cd /home/spatiallabs/isaacsim
 
 1. 啟動 UR driver 的 Mock Hardware，確認 controller 為 active。
 2. 從相同 ROS domain 啟動 Isaac Sim 並開啟包含 `/World/ur3` 的 Stage。
-3. 選擇一種目標來源：
+3. 確認 Active Robot 顯示完整 path 並初次選取 `/World/ur3`；若 Stage 另有套用
+   `IsaacRobotAPI` 的 robots，確認清單依 path 排序，prototype 內 prim 不會出現。
+4. 選擇一種目標來源：
    - 在 Robot Poser 求解小幅度目標並儲存，然後 Refresh、選取並 Load；或
    - 讓 Timeline 保持 Play，調整 `/World/ur3`，等待手臂到位後按
      **Get Current Simulation Pose**。
-4. 檢查畫面上的來源與六個弧度值，將速度設為保守值。
-5. 確認 `/joint_states` 與 Action server 正常後按 **Execute on Physical UR3**。
-6. 確認 Status 依序出現 sending、accepted、completed；再以 `/joint_states`
+5. 建立有效 target 後改選另一個 robot，確認 target 立即清除、Execute 停用，且
+   Named Poses 重新載入。切回 `/World/ur3` 並重新建立 target。
+6. 按 Refresh，確認現有 Active Robot path 仍存在時會保留；再用沒有該 path 的
+   Stage 測試自動重掃，確認選擇回到 `None` 而不會跳到其他 robot。另確認
+   `OPENED`／`ASSETS_LOADED` 後不需手動操作即可更新清單。
+7. 選取一個不具固定 UR3 六軸名稱的 articulation，分別測試 Load 與 Get Current；
+   兩者都必須報告缺少 UR joints，且 Execute 維持停用。
+8. 檢查畫面上的來源與六個弧度值，將速度設為保守值。
+9. 確認 `/joint_states` 與 Action server 正常後按 **Execute on Physical UR3**；從
+   sending 到 final result 期間，Active Robot 與 Refresh 必須停用，完成後恢復。
+10. 確認 Status 依序出現 sending、accepted、completed；再以 `/joint_states`
    比較最終位置。
 
 ### 實體 UR3
@@ -433,17 +452,18 @@ Named Pose 目標不受 Timeline 狀態阻擋，Get Current 則明確要求 Time
 
 | 控制項 | 行為 |
 | --- | --- |
-| `Named Pose` | 選擇目前 `/World/ur3` 的已儲存姿勢；變更選項會使舊目標失效 |
-| `Refresh` | 重新掃描 Stage 與 Named Poses，同時清除已驗證目標 |
+| `Active Robot` | 顯示非 prototype 的 IsaacRobotAPI 完整 prim paths；改選會清除舊 target 並載入該 robot 的 Named Poses |
+| `Named Pose` | 選擇目前 Active Robot 的已儲存姿勢；變更選項會使舊目標失效 |
+| `Refresh` | 重掃 robots 與所選 robot 的 Named Poses，同時清除已驗證目標 |
 | `Load and Validate IK Solution` | 載入、排序並驗證六個關節值；執行期間不可使用 |
-| `Get Current Simulation Pose` | Timeline Play 時擷取 `/World/ur3` 的實際六軸位置；失敗會清除舊目標 |
+| `Get Current Simulation Pose` | Timeline Play 時擷取 Active Robot 的實際六軸位置；失敗會清除舊目標 |
 | `Joint speed limit` | 設定 duration 計算使用的共同速度上限 |
 | `Execute on Physical UR3` | 通過前置檢查後立即傳送一個 Action goal |
 | `Cancel Goal` | 僅在 goal accepted 後啟用；要求 controller 取消，不是 emergency stop |
 | `Status` | 顯示掃描、驗證、goal、cancel、stall 與 controller 結果 |
 
-執行期間 Load、Get Current、Execute 與速度滑桿會停用；goal accepted 後才啟用
-Cancel。收到最終 result 後會清除 Action/watchdog 狀態並恢復控制項。先前的
+執行期間 Active Robot、Refresh、Load、Get Current、Execute 與速度滑桿會停用；
+goal accepted 後才啟用 Cancel。收到最終 result 後會清除 Action/watchdog 狀態並恢復控制項。先前的
 target snapshot 仍保留，所以結果完成後可以再次執行同一目標。
 
 ## 疑難排解
@@ -452,13 +472,19 @@ target snapshot 仍保留，所以結果完成後可以再次執行同一目標�
 
 先開啟場景，再按 Refresh。
 
-### `Robot prim not found: /World/ur3`
+### `No Active Robot is selected`
 
-目前 Stage 的 UR3 不在固定路徑。調整 Stage，或修改 `ROBOT_PRIM_PATH`。
+按 Refresh 後從 Active Robot 選擇具有 `IsaacRobotAPI` 的完整 prim path。若舊 path
+已從 Stage 消失，選單刻意回到 `None`，需由操作員明確選擇下一個 robot。
+
+### `Robot prim not found: ...`
+
+所選 robot 在操作期間從 Stage 消失。按 Refresh；選單會回到 `None`，不會自動
+改選其他 robot。
 
 ### 沒有任何 Named Pose
 
-用 Robot Poser 對 `/World/ur3` 成功求解並儲存 Named Pose，再按 Refresh。
+用 Robot Poser 對目前 Active Robot 成功求解並儲存 Named Pose，再按 Refresh。
 
 ### `IK result is missing UR joints`
 
@@ -468,11 +494,11 @@ Active Robot 與六個 joint prim 名稱。
 ### Get Current 要求啟動 Timeline
 
 Get Current 只讀取 PhysX 實際位置。按下 Timeline **Play**，等待至少一個 simulation
-frame，確認 `/World/ur3` 已到達想要的位置，再重新按下按鈕。
+frame，確認 Active Robot 已到達想要的位置，再重新按下按鈕。
 
 ### `The planning articulation is not ready`
 
-確認 `/World/ur3` 具有 articulation root，Timeline 正在 Play，且 physics scene 已
+確認 Active Robot 具有 articulation root，Timeline 正在 Play，且 physics scene 已
 完成初始化。剛開始播放時等待一個 frame 再試；不要改為讀取
 `/World/ur3_real2sim`，那是實機回授手臂。
 
@@ -512,14 +538,16 @@ Stop、controller log 與 `/joint_states` 是否仍更新。自動 cancellation 
 │   └── omni/isaac/ur3_sync/
 │       ├── __init__.py
 │       ├── extension.py
-│       └── joint_targets.py
+│       ├── joint_targets.py
+│       └── robot_selection.py
 ├── scenes/
 │   └── real2sim_ur3_dev.usd
 ├── feedback/
 │   ├── ur3_us.pdf
 │   └── *.md
 ├── tests/
-│   └── test_joint_targets.py
+│   ├── test_joint_targets.py
+│   └── test_robot_selection.py
 └── weekly_report_0801/
     └── ...
 ```
