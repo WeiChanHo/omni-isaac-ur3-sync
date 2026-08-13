@@ -419,22 +419,23 @@ class Ur3SyncExtension(omni.ext.IExt):
                     style={"font_size": 12, "color": 0xFFFFCC66},
                 )
 
-                self.load_btn = ui.Button(
-                    "Load and Validate IK Solution",
-                    height=36,
-                    clicked_fn=self._on_load_clicked,
-                )
+                with ui.HStack(height=36, spacing=10):
+                    self.load_btn = ui.Button(
+                        "Load and Validate IK Solution",
+                        height=36,
+                        clicked_fn=self._on_load_clicked,
+                    )
 
-                self.get_current_btn = ui.Button(
-                    "Get Current Simulation Pose",
-                    height=36,
-                    clicked_fn=self._on_get_current_clicked,
-                    tooltip=(
-                        "Capture the actual PhysX joint positions of "
-                        "the selected Active Robot. The Timeline must be "
-                        "playing."
-                    ),
-                )
+                    self.get_current_btn = ui.Button(
+                        "Get Current Simulation Pose",
+                        height=36,
+                        clicked_fn=self._on_get_current_clicked,
+                        tooltip=(
+                            "Capture the actual PhysX joint positions of "
+                            "the selected Active Robot. The Timeline must be "
+                            "playing."
+                        ),
+                    )
 
                 with ui.HStack(height=28, spacing=8):
                     ui.Label("Joint speed limit:", width=125)
