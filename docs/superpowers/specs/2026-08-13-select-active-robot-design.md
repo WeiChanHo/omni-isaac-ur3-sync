@@ -10,6 +10,11 @@ six-joint UR3 validation before physical execution.
 
 - The top of the extension window contains an `Active Robot` combo box and a
   `Refresh` button.
+- Immediately below that row, a dedicated status label displays
+  `Selected robot: <full prim path>`. When no robot is selected, it displays
+  `Selected robot: None`. Its visual style matches the existing selected-pose
+  label so the active robot remains visible even when the combo box is not
+  open.
 - Discovery walks the current USD stage exactly like Robot Poser: include prims
   carrying `IsaacRobotAPI`, exclude prims inside prototypes, and display full
   prim paths.
@@ -28,6 +33,11 @@ selection change immediately invalidates any validated/captured target and
 loads the selected robot's named-pose list. Selecting `None` clears the pose
 list and disables target-producing operations through their normal validation
 paths.
+
+The selected-robot label is updated after every combo-box rebuild and every
+user selection change. Therefore initial discovery, manual Refresh, Stage
+`OPENED`, Stage `ASSETS_LOADED`, selection fallback to `None`, and explicit
+robot changes all leave the label synchronized with `_selected_robot_path`.
 
 Manual Refresh rescans both robots and the selected robot's named poses. Stage
 `OPENED` and `ASSETS_LOADED` events perform the same rescan. Subscriptions are
