@@ -4,6 +4,12 @@
 DEFAULT_ROBOT_PRIM_PATH = "/World/ur3"
 
 
+def format_selected_robot_label(selected_path):
+    """Format the persistent UI label for the selected robot path."""
+    display_path = selected_path if selected_path is not None else "None"
+    return f"Selected robot: {display_path}"
+
+
 def resolve_robot_selection(
     robot_paths,
     previous_path,

@@ -452,7 +452,7 @@ Named Pose 目標不受 Timeline 狀態阻擋，Get Current 則明確要求 Time
 
 | 控制項 | 行為 |
 | --- | --- |
-| `Active Robot` | 顯示非 prototype 的 IsaacRobotAPI 完整 prim paths；改選會清除舊 target 並載入該 robot 的 Named Poses |
+| `Active Robot` | 顯示非 prototype 的 IsaacRobotAPI 完整 prim paths；下方的 `Selected robot` 會持續顯示目前完整 path 或 `None`；改選會清除舊 target 並載入該 robot 的 Named Poses |
 | `Named Pose` | 選擇目前 Active Robot 的已儲存姿勢；變更選項會使舊目標失效 |
 | `Refresh` | 重掃 robots 與所選 robot 的 Named Poses，同時清除已驗證目標 |
 | `Load and Validate IK Solution` | 載入、排序並驗證六個關節值；執行期間不可使用 |

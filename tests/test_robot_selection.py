@@ -14,10 +14,13 @@ MODULE_DIR = (
 )
 sys.path.insert(0, str(MODULE_DIR))
 
-from robot_selection import resolve_robot_selection  # noqa: E402
+from robot_selection import (  # noqa: E402
+    format_selected_robot_label,
+    resolve_robot_selection,
+)
 
 
-class ResolveRobotSelectionTests(unittest.TestCase):
+class RobotSelectionTests(unittest.TestCase):
     def test_sorts_paths_and_prefers_ur3_on_initial_scan(self):
         paths, selected = resolve_robot_selection(
             ["/World/z_robot", "/World/ur3", "/World/a_robot"],
@@ -30,6 +33,18 @@ class ResolveRobotSelectionTests(unittest.TestCase):
             ["/World/a_robot", "/World/ur3", "/World/z_robot"],
         )
         self.assertEqual(selected, "/World/ur3")
+
+    def test_formats_selected_robot_full_path(self):
+        self.assertEqual(
+            format_selected_robot_label("/World/ur3"),
+            "Selected robot: /World/ur3",
+        )
+
+    def test_formats_none_when_no_robot_is_selected(self):
+        self.assertEqual(
+            format_selected_robot_label(None),
+            "Selected robot: None",
+        )
 
     def test_preserves_previous_path_instead_of_switching_to_default(self):
         paths, selected = resolve_robot_selection(
