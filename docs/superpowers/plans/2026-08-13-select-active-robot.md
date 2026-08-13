@@ -75,3 +75,70 @@
 - [x] **Step 3: Run** `python3 -m unittest discover -s tests -v` and confirm zero failures.
 - [x] **Step 4: Run** `python3 -m compileall exts tests` and confirm zero failures.
 - [x] **Step 5: Review** `git diff --check`, `git diff --stat`, and the complete diff against every requirement above.
+
+### Task 5: Persistent selected-robot label
+
+**Files:**
+- Modify: `exts/omni/isaac/ur3_sync/robot_selection.py`
+- Modify: `exts/omni/isaac/ur3_sync/extension.py`
+- Modify: `tests/test_robot_selection.py`
+- Modify: `README.md`
+
+**Interfaces:**
+- Produces: `format_selected_robot_label(selected_path) -> str`.
+- Consumes: `_selected_robot_path` after discovery, Refresh, Stage events, and user selection changes.
+
+- [x] **Step 1: Write failing label-format tests**
+
+```python
+def test_formats_selected_robot_full_path(self):
+    self.assertEqual(
+        format_selected_robot_label("/World/ur3"),
+        "Selected robot: /World/ur3",
+    )
+
+def test_formats_none_when_no_robot_is_selected(self):
+    self.assertEqual(
+        format_selected_robot_label(None),
+        "Selected robot: None",
+    )
+```
+
+- [x] **Step 2: Verify the tests fail**
+
+Run: `python3 -m unittest tests/test_robot_selection.py -v`
+Expected: import error because `format_selected_robot_label` does not exist.
+
+- [x] **Step 3: Implement formatting and UI synchronization**
+
+```python
+def format_selected_robot_label(selected_path):
+    display_path = selected_path if selected_path is not None else "None"
+    return f"Selected robot: {display_path}"
+```
+
+Create `self.selected_robot_label` below the Active Robot row. Add
+`_update_selected_robot_label()` and call it after robot-combo rebuilds and
+after a user changes `_selected_robot_path`.
+
+- [x] **Step 4: Document and verify**
+
+Update the README UI table, then run:
+
+```bash
+python3 -m unittest discover -s tests -v
+python3 -m compileall exts tests
+git diff --check
+```
+
+Expected: 14 tests pass, compilation exits zero, and diff check is clean.
+
+- [x] **Step 5: Commit**
+
+```bash
+git add README.md docs/superpowers/plans/2026-08-13-select-active-robot.md \
+  exts/omni/isaac/ur3_sync/extension.py \
+  exts/omni/isaac/ur3_sync/robot_selection.py \
+  tests/test_robot_selection.py
+git commit -m "feat: show selected active robot"
+```

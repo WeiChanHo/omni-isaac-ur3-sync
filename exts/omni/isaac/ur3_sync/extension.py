@@ -37,6 +37,7 @@ from isaacsim.robot.poser import (
 from .joint_targets import normalize_joint_positions
 from .robot_selection import (
     DEFAULT_ROBOT_PRIM_PATH,
+    format_selected_robot_label,
     resolve_robot_selection,
 )
 
@@ -367,7 +368,7 @@ class Ur3SyncExtension(omni.ext.IExt):
         self._window = ui.Window(
             "UR3 Robot Poser Execution",
             width=470,
-            height=610,
+            height=635,
         )
 
         with self._window.frame:
@@ -392,6 +393,13 @@ class Ur3SyncExtension(omni.ext.IExt):
                         width=80,
                         clicked_fn=self._refresh_robots_and_poses,
                     )
+
+                self.selected_robot_label = ui.Label(
+                    format_selected_robot_label(None),
+                    word_wrap=True,
+                    height=22,
+                    style={"font_size": 12, "color": 0xFFFFCC66},
+                )
 
                 with ui.HStack(height=28, spacing=8):
                     ui.Label("Named Pose:", width=90)
@@ -585,6 +593,14 @@ class Ur3SyncExtension(omni.ext.IExt):
             model.get_item_value_model().set_value(selected_index)
         finally:
             self._updating_robot_combo = False
+        self._update_selected_robot_label()
+
+    def _update_selected_robot_label(self):
+        """在下拉選單之外清楚顯示目前 Active Robot。"""
+        if getattr(self, "selected_robot_label", None) is not None:
+            self.selected_robot_label.text = format_selected_robot_label(
+                self._selected_robot_path
+            )
 
     def _refresh_robots_and_poses(self):
         """重新掃描 robots，保留有效舊選擇，並更新其 Named Poses。"""
@@ -646,6 +662,7 @@ class Ur3SyncExtension(omni.ext.IExt):
             return
 
         self._selected_robot_path = selected_path
+        self._update_selected_robot_label()
         self._invalidate_pending_target()
         self._refresh_pose_names()
 
