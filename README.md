@@ -52,13 +52,19 @@ flowchart LR
     subgraph Repo["omni.isaac.ur3_sync repository"]
         Manifest["config/extension.toml<br/>套件資訊與依賴"]
         Init["__init__.py<br/>匯出 Extension class"]
-        Ext["extension.py<br/>Ur3SyncExtension"]
+        Ext["extension.py<br/>生命週期與流程協調"]
+        UiFlow["ui_workflow.py<br/>視窗與警告對話框"]
+        TargetFlow["target_workflow.py<br/>robot 與 target 取得"]
+        TrajectoryFlow["trajectory_workflow.py<br/>ROS Action 與 watchdog"]
         Normalize["joint_targets.py<br/>六軸排序與數值驗證"]
         Selection["robot_selection.py<br/>robot 排序與選擇保留規則"]
         Scene["scenes/real2sim_ur3_dev.usd<br/>開發場景資產"]
         Manifest --> Init --> Ext
-        Ext --> Normalize
-        Ext --> Selection
+        Ext --> UiFlow
+        Ext --> TargetFlow
+        Ext --> TrajectoryFlow
+        TargetFlow --> Normalize
+        TargetFlow --> Selection
     end
 
     RobotPoser["Isaac Sim Robot Poser<br/>求解並儲存 Named Pose"] --> Stage["目前開啟的 USD Stage<br/>IsaacRobotAPI robots"]
@@ -89,23 +95,25 @@ flowchart LR
 | --- | --- | --- |
 | `config/extension.toml` | 定義 Extension ID、名稱、版本、Python module path 與 Isaac Sim dependencies | Isaac Sim Extension Manager 讀取後載入 `omni.isaac.ur3_sync` |
 | `exts/omni/isaac/ur3_sync/__init__.py` | 重新匯出 `extension.py` 的內容 | 讓 Kit 找到 `Ur3SyncExtension` |
-| `exts/omni/isaac/ur3_sync/extension.py` | UI、兩種目標來源、ROS 2 node、Action client、取消與 stall watchdog | 讀取 Stage／PhysX articulation，接收 `/joint_states`，呼叫 controller Action |
+| `exts/omni/isaac/ur3_sync/extension.py` | 組合 workflow mixins，管理 Extension startup/shutdown 與 Stage events | 保持 `Ur3SyncExtension` 為 Kit 唯一 entry point，集中建立及釋放資源 |
+| `exts/omni/isaac/ur3_sync/ui_workflow.py` | 建立 UI、更新狀態與速度顯示、管理實機運動警告 | 將 UI callbacks 連接至 target 與 trajectory workflows |
+| `exts/omni/isaac/ur3_sync/target_workflow.py` | Active Robot／Named Pose 選擇、IK target 驗證、模擬姿勢擷取 | 讀取 Stage 與 PhysX articulation，產生不可變的待執行 target snapshot |
+| `exts/omni/isaac/ur3_sync/trajectory_workflow.py` | ROS 2 node、`/joint_states`、Action goal/result/cancel 與 stall watchdog | 將已驗證 target 傳至 controller，並同步執行狀態至 UI |
 | `exts/omni/isaac/ur3_sync/joint_targets.py` | 將 articulation DOF 重新排列成固定六軸順序並驗證數值 | 由 Get Current 呼叫；不依賴 Isaac Sim，能以一般 Python 測試 |
 | `exts/omni/isaac/ur3_sync/robot_selection.py` | 排序 robot paths、保留有效舊選擇、初次偏好 `/World/ur3`、否則回到 `None` | 不依賴 Isaac Sim，供 Active Robot 重掃與一般 Python 測試使用 |
 | `scenes/real2sim_ur3_dev.usd` | 開發用 USD 場景／覆寫層 | 程式不會自動開啟它；Extension 操作目前 Stage 中使用者選取的 Active Robot |
 | `feedback/` | UR3 datasheet 與開發回饋 | 不會在 runtime 載入；datasheet 是目前速度上限註解的依據 |
 | `weekly_report_0801/` | 歷史報告與畫面 | 不參與 runtime，內容可能早於目前實作 |
 
-`Ur3SyncExtension` 內部可分為六個責任區：
+`Ur3SyncExtension` 透過 mixin 組合以下責任，原有 callback 名稱與共享 instance
+state 保持不變：
 
-| 區域 | 主要方法 |
+| 模組 | 主要方法 |
 | --- | --- |
-| 生命週期與 ROS 初始化 | `on_startup`、`_initialize_ros`、`on_shutdown` |
-| ROS 回授與 Kit event pump | `_on_joint_state`、`_on_app_update` |
-| Stage lifecycle、Active Robot 與 Named Pose 選擇 | `_subscribe_stage_events`、`_refresh_robots_and_poses`、`_refresh_pose_names` |
-| IK 結果載入與驗證 | `_load_named_pose_positions`、`_on_load_clicked` |
-| 模擬姿勢擷取 | `_read_current_simulation_positions`、`_on_get_current_clicked` |
-| 軌跡 Action 與監控 | `_on_execute_clicked`、`_send_trajectory_goal`、goal/result/cancel callbacks、stall watchdog |
+| `extension.py` | `on_startup`、Stage event callbacks、`on_shutdown` |
+| `ui_workflow.py` | `_build_ui`、狀態／速度更新、warning dialog callbacks |
+| `target_workflow.py` | robot／pose refresh、IK target 載入、simulation snapshot 擷取 |
+| `trajectory_workflow.py` | ROS 初始化與 event pump、goal/result/cancel callbacks、stall watchdog |
 
 ## 啟動與事件迴圈
 
@@ -539,7 +547,10 @@ Stop、controller log 與 `/joint_states` 是否仍更新。自動 cancellation 
 │       ├── __init__.py
 │       ├── extension.py
 │       ├── joint_targets.py
-│       └── robot_selection.py
+│       ├── robot_selection.py
+│       ├── target_workflow.py
+│       ├── trajectory_workflow.py
+│       └── ui_workflow.py
 ├── scenes/
 │   └── real2sim_ur3_dev.usd
 ├── feedback/
@@ -547,7 +558,9 @@ Stop、controller log 與 `/joint_states` 是否仍更新。自動 cancellation 
 │   └── *.md
 ├── tests/
 │   ├── test_joint_targets.py
-│   └── test_robot_selection.py
+│   ├── test_module_structure.py
+│   ├── test_robot_selection.py
+│   └── test_ui_layout.py
 └── weekly_report_0801/
     └── ...
 ```
