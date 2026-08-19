@@ -31,7 +31,7 @@ Isaac Sim and the UR driver must use the same ROS 2 environment and
 ## Program Architecture and Data Flow
 
 ```mermaid
-flowchart LR
+flowchart TD
     Startup["on_startup(ext_id)"] --> RosInit["_initialize_ros()<br/>node, ActionClient, /joint_states subscriber"]
     Startup --> BuildUI["_build_ui()<br/>bind UI callbacks"]
     Startup --> Refresh["_refresh_robots_and_poses()"]
