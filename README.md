@@ -21,12 +21,19 @@ stream joint positions.
 - Isaac Sim 6.0.1
 - ROS 2 Jazzy
 - Universal Robots ROS 2 Driver
-- A USD stage containing a UR3 with `IsaacRobotAPI`
+- A USD stage containing a UR3 whose articulation root prim has
+  `IsaacRobotAPI` applied
 - For physical use: a configured UR3, External Control, and access to its
   physical emergency stop
 
 Isaac Sim and the UR driver must use the same ROS 2 environment and
 `ROS_DOMAIN_ID`.
+
+`IsaacRobotAPI` identifies the prim that the extension lists as an **Active
+Robot**. Apply the API schema to the UR3's articulation root prim—the prim that
+represents the complete articulated robot—not to an individual link, joint, or
+mesh prim. The extension will not discover the UR3 if its articulation root
+does not have `IsaacRobotAPI`.
 
 ## Program Architecture and Data Flow
 
@@ -270,7 +277,7 @@ For details on adjusting articulation joints, see NVIDIA's
 | Message or symptom | What to do |
 | --- | --- |
 | No active USD stage | Open a USD stage, then select **Refresh**. |
-| No Active Robot is selected | Select a robot with `IsaacRobotAPI`. |
+| No Active Robot is selected | Apply `IsaacRobotAPI` to the UR3 articulation root prim (not a child link or mesh), select **Refresh**, then select the robot. |
 | No Named Poses are listed | Save a valid pose in Robot Poser, then select **Refresh**. |
 | IK result is missing UR joints | Check that the pose contains all six UR3 joints with the expected names. |
 | Timeline must be playing | Select **Play**, wait at least one simulation frame, and capture again. |
