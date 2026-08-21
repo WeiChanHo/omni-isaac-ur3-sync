@@ -66,7 +66,7 @@ flowchart TD
         ExecuteClick["_on_execute_clicked()"] --> Speed["_get_command_speed()<br/>-> speed"]
         ExecuteClick --> Duration["_calculate_motion_duration(<br/>hardware_positions, pending_positions, speed)<br/>-> max_delta, duration"]
         Speed --> Duration
-        Pending -. "_pending_positions / label" .-> ExecuteClick
+        Pending -. "_pending_positions: trajectory target<br/>_pending_target_label: status text only" .-> ExecuteClick
         JointState["_on_joint_state(msg)<br/>name + position -> _hardware_positions[6]"] -. "_hardware_positions" .-> ExecuteClick
 
         Duration --> Send["_send_trajectory_goal(<br/>target_positions, duration, target_label)<br/>-> FollowJointTrajectory.Goal"]
