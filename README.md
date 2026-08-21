@@ -54,7 +54,7 @@ flowchart TD
         CurrentClick["_on_get_current_clicked()"] --> ReadSim["_read_current_simulation_positions()<br/>-> dof_names, position_rows"]
         ReadSim --> Normalize["normalize_joint_positions(<br/>dof_names, position_rows, ur_joint_names)<br/>-> positions[6] in controller order"]
 
-        LoadPose --> Pending["_set_pending_target(source, label, positions)<br/>-> _pending_target_* snapshot"]
+        LoadPose --> Pending["_set_pending_target(method, label, positions)<br/>-> pending target snapshot"]
         Normalize --> Pending
     end
 
@@ -225,9 +225,9 @@ for the Robot Poser workflow.
    </p>
 
 2. Select **Load and Validate IK Solution**.
-3. Review the source, target name, and all six joint positions shown in
-   radians. The status should report that the IK solution was loaded and
-   validated.
+3. Review the pose acquisition method, target name, and all six joint
+   positions shown in radians. The status should report that the IK solution
+   was loaded and validated.
 
    <p align="center">
      <img src="docs/5.2.png" alt="Validate the Named Pose joint target" width="700">

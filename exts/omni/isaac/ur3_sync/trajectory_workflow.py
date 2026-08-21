@@ -231,7 +231,7 @@ class _TrajectoryWorkflowMixin:
             return
 
         if (
-            self._pending_target_source is None
+            self._pending_pose_method is None
             or self._pending_target_label is None
             or self._pending_positions is None
         ):

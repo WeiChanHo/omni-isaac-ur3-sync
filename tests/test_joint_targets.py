@@ -15,7 +15,10 @@ MODULE_DIR = (
 )
 sys.path.insert(0, str(MODULE_DIR))
 
-from joint_targets import normalize_joint_positions  # noqa: E402
+from joint_targets import (  # noqa: E402
+    format_target_summary,
+    normalize_joint_positions,
+)
 
 
 EXPECTED_JOINTS = [
@@ -26,6 +29,33 @@ EXPECTED_JOINTS = [
     "wrist_2_joint",
     "wrist_3_joint",
 ]
+
+
+class FormatTargetSummaryTests(unittest.TestCase):
+    def test_identifies_pose_acquisition_method(self):
+        cases = (
+            (
+                "Robot Poser Named Pose",
+                "ready",
+                "Method: Robot Poser Named Pose\n"
+                "Target: ready\n"
+                "Joint positions (rad): joints",
+            ),
+            (
+                "Current Simulation Pose",
+                "Current Simulation Snapshot",
+                "Method: Current Simulation Pose\n"
+                "Target: Current Simulation Snapshot\n"
+                "Joint positions (rad): joints",
+            ),
+        )
+
+        for method, label, expected in cases:
+            with self.subTest(method=method):
+                self.assertEqual(
+                    format_target_summary(method, label, "joints"),
+                    expected,
+                )
 
 
 class NormalizeJointPositionsTests(unittest.TestCase):

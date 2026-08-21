@@ -15,7 +15,7 @@ from isaacsim.robot.poser import (
     validate_robot_schema,
 )
 
-from .joint_targets import normalize_joint_positions
+from .joint_targets import format_target_summary, normalize_joint_positions
 from .robot_selection import (
     DEFAULT_ROBOT_PRIM_PATH,
     format_selected_robot_label,
@@ -265,7 +265,7 @@ class _TargetWorkflowMixin:
 
     def _invalidate_pending_target(self):
         """清除已驗證或已擷取的目標，並停用實體執行。"""
-        self._pending_target_source = None
+        self._pending_pose_method = None
         self._pending_target_label = None
         self._pending_positions = None
 
@@ -281,9 +281,9 @@ class _TargetWorkflowMixin:
             for name, value in zip(self.ur_joint_names, positions)
         )
 
-    def _set_pending_target(self, source, label, positions):
+    def _set_pending_target(self, method, label, positions):
         """儲存一份不可由後續模擬變更影響的關節目標快照。"""
-        self._pending_target_source = source
+        self._pending_pose_method = method
         self._pending_target_label = label
         self._pending_positions = list(positions)
         self.execute_btn.enabled = True
@@ -357,15 +357,14 @@ class _TargetWorkflowMixin:
             return
 
         self._set_pending_target(
-            self.TARGET_SOURCE_NAMED_POSE,
+            self.POSE_METHOD_NAMED_POSE,
             pose_name,
             positions,
         )
-        self.solution_label.text = (
-            "Source: Robot Poser Named Pose\n"
-            f"Target: {pose_name}\n"
-            "Joint positions (rad): "
-            f"{self._format_joint_positions(positions)}"
+        self.solution_label.text = format_target_summary(
+            self.POSE_METHOD_NAMED_POSE,
+            pose_name,
+            self._format_joint_positions(positions),
         )
         self._set_status(
             "IK solution loaded and validated. Review the target joints "
@@ -424,15 +423,14 @@ class _TargetWorkflowMixin:
 
         target_label = "Current Simulation Snapshot"
         self._set_pending_target(
-            self.TARGET_SOURCE_CURRENT_SIMULATION,
+            self.POSE_METHOD_CURRENT_SIMULATION,
             target_label,
             positions,
         )
-        self.solution_label.text = (
-            "Source: Current Simulation Pose\n"
-            f"Target: {target_label}\n"
-            "Joint positions (rad): "
-            f"{self._format_joint_positions(positions)}"
+        self.solution_label.text = format_target_summary(
+            self.POSE_METHOD_CURRENT_SIMULATION,
+            target_label,
+            self._format_joint_positions(positions),
         )
         self._set_status(
             "Current simulation pose captured. Review the six-joint "

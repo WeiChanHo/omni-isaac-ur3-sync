@@ -31,7 +31,7 @@ def _assigned_attributes(nodes):
 
 
 class UiLayoutTests(unittest.TestCase):
-    def test_target_source_buttons_share_horizontal_row(self):
+    def test_pose_acquisition_buttons_share_horizontal_row(self):
         tree = ast.parse(UI_WORKFLOW_PATH.read_text(encoding="utf-8"))
         build_ui = next(
             node

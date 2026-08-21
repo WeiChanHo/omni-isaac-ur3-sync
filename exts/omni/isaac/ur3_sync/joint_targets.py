@@ -3,6 +3,15 @@
 import math
 
 
+def format_target_summary(method, label, positions_text):
+    """Describe how a physical-motion target pose was acquired."""
+    return (
+        f"Method: {method}\n"
+        f"Target: {label}\n"
+        f"Joint positions (rad): {positions_text}"
+    )
+
+
 def normalize_joint_positions(
     dof_names,
     position_rows,

@@ -29,8 +29,8 @@ class Ur3SyncExtension(
     ACTION_NAME = "/scaled_joint_trajectory_controller/follow_joint_trajectory"
     JOINT_STATE_TOPIC = "/joint_states"
 
-    TARGET_SOURCE_NAMED_POSE = "named_pose"
-    TARGET_SOURCE_CURRENT_SIMULATION = "current_simulation"
+    POSE_METHOD_NAMED_POSE = "Robot Poser Named Pose"
+    POSE_METHOD_CURRENT_SIMULATION = "Current Simulation Pose"
 
     # UR3 data-sheet limits (feedback/ur3_us.pdf): the three arm joints are
     # rated for 180 deg/s and the three wrist joints for 360 deg/s.  The UI
@@ -81,7 +81,7 @@ class Ur3SyncExtension(
         self._robot_refresh_pending = False
         self._pose_names = []
         self._updating_pose_combo = False
-        self._pending_target_source = None
+        self._pending_pose_method = None
         self._pending_target_label = None
         self._pending_positions = None
         self._hardware_positions = None
