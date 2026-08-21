@@ -54,9 +54,26 @@ class ModuleStructureTests(unittest.TestCase):
                 "_UiWorkflowMixin",
                 "_TargetWorkflowMixin",
                 "_TrajectoryWorkflowMixin",
+                "_LiveFollowWorkflowMixin",
                 "omni.ext.IExt",
             ],
         )
+
+    def test_live_follow_workflow_owns_streaming_lifecycle(self):
+        expected_methods = {
+            "_on_controller_state",
+            "_on_live_follow_mode_changed",
+            "_set_live_follow_mode_model",
+            "_update_live_follow",
+            "_stop_live_follow",
+            "_publish_live_follow_trajectory",
+            "_set_live_follow_controls",
+        }
+        methods = _class_methods(
+            MODULE_DIR / "live_follow_workflow.py",
+            "_LiveFollowWorkflowMixin",
+        )
+        self.assertTrue(expected_methods <= methods)
 
     def test_ui_workflow_owns_window_status_and_warning_methods(self):
         expected_methods = {

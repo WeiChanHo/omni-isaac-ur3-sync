@@ -137,6 +137,22 @@ class _UiWorkflowMixin:
                     )
                     self.stop_btn.enabled = False
 
+                ui.Label(
+                    "Live Streaming Mode: fixed 0.50 rad/s, maximum 30 Hz. "
+                    "Turning it OFF is not an emergency stop.",
+                    word_wrap=True,
+                    style={"font_size": 11, "color": 0xFFAAAAAA},
+                )
+                with ui.HStack(height=32, spacing=10):
+                    ui.Label("Live Streaming Mode", width=180)
+                    self.live_follow_mode_toggle = ui.CheckBox(
+                        width=40,
+                    )
+                    self.live_follow_mode_toggle.model.set_value(False)
+                    self.live_follow_mode_toggle.model.add_value_changed_fn(
+                        self._on_live_follow_mode_changed
+                    )
+
                 ui.Separator()
                 ui.Label("Status")
                 self.status_label = ui.Label(

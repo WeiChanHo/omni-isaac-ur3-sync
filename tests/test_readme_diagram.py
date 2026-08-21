@@ -38,6 +38,46 @@ class ReadmeDiagramTests(unittest.TestCase):
             readme,
         )
 
+    def test_live_follow_topics_and_safety_limits_are_documented(self):
+        readme = (REPOSITORY_ROOT / "README.md").read_text(encoding="utf-8")
+        self.assertIn(
+            "/scaled_joint_trajectory_controller/joint_trajectory", readme
+        )
+        self.assertIn(
+            "/scaled_joint_trajectory_controller/controller_state", readme
+        )
+        self.assertIn("maximum 30 Hz", readme)
+        self.assertIn("0.050 rad", readme)
+        self.assertIn("Live Streaming Mode", readme)
+        self.assertIn("not an emergency stop", readme)
+
+    def test_live_follow_is_part_of_architecture_diagram(self):
+        readme = (REPOSITORY_ROOT / "README.md").read_text(encoding="utf-8")
+        self.assertIn('LiveMode["Live Streaming Mode toggle', readme)
+        self.assertIn("LiveWaypoint --> CommandTopic", readme)
+        self.assertIn(
+            'ControllerState["/scaled_joint_trajectory_controller/controller_state',
+            readme,
+        )
+        self.assertIn('reference, feedback, error"] --> LiveMonitor', readme)
+        self.assertIn("LiveSettle --> LiveIdle", readme)
+        self.assertIn("LiveIdle -->|target moves| LiveWaypoint", readme)
+
+    def test_live_streaming_disconnect_conditions_are_documented(self):
+        readme = (REPOSITORY_ROOT / "README.md").read_text(encoding="utf-8")
+        for condition in (
+            "Timeline stops",
+            "Stage changes",
+            "Active Robot changes",
+            "stale `/joint_states`",
+            "stale controller state",
+            "tracking error",
+            "read or publish exception",
+            "extension shutdown",
+        ):
+            with self.subTest(condition=condition):
+                self.assertIn(condition, readme)
+
 
 if __name__ == "__main__":
     unittest.main()

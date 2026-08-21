@@ -64,6 +64,12 @@ class _TargetWorkflowMixin:
 
     def _refresh_robots_and_poses(self):
         """重新掃描 robots，保留有效舊選擇，並更新其 Named Poses。"""
+        if self._live_follow_active:
+            self._set_status(
+                "Turn Live Streaming Mode OFF before refreshing robots.",
+                self.STATUS_WARN,
+            )
+            return
         if self._is_executing:
             self._robot_refresh_pending = True
             return
@@ -106,6 +112,12 @@ class _TargetWorkflowMixin:
         """切換 Active Robot 後使舊 target 失效並載入新 poses。"""
         del model, item
         if self._updating_robot_combo:
+            return
+        if self._live_follow_active:
+            self._set_status(
+                "Turn Live Streaming Mode OFF before changing Active Robot.",
+                self.STATUS_WARN,
+            )
             return
 
         index = (
@@ -334,6 +346,12 @@ class _TargetWorkflowMixin:
 
     def _on_load_clicked(self):
         """驗證所選 IK 姿勢，並使其可供執行。"""
+        if self._live_follow_active:
+            self._set_status(
+                "Turn Live Streaming Mode OFF before loading a pose.",
+                self.STATUS_WARN,
+            )
+            return
         if self._is_executing:
             self._set_status(
                 "Cannot load another pose while a trajectory is executing.",
@@ -405,6 +423,12 @@ class _TargetWorkflowMixin:
 
     def _on_get_current_clicked(self):
         """擷取規劃用模擬 UR3 的實際姿勢，作為下一個實機目標。"""
+        if self._live_follow_active:
+            self._set_status(
+                "Turn Live Streaming Mode OFF before capturing a pose.",
+                self.STATUS_WARN,
+            )
+            return
         if self._is_executing:
             self._set_status(
                 "Cannot capture a simulation pose while a trajectory is "
