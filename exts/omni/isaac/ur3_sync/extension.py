@@ -1,8 +1,7 @@
 """Bridge Isaac Sim joint targets to a physical UR3 controller.
 
-The operator loads a Robot Poser named pose or captures the planning
-articulation's current positions, then sends one FollowJointTrajectory goal.
-Joint positions are never continuously streamed.
+The operator can send one FollowJointTrajectory goal or explicitly start a
+rate-limited short-trajectory Live Follow workflow.
 """
 
 import math
@@ -16,18 +15,36 @@ import omni.usd
 from .target_workflow import _TargetWorkflowMixin
 from .trajectory_workflow import _TrajectoryWorkflowMixin
 from .ui_workflow import _UiWorkflowMixin
+from .live_follow_workflow import _LiveFollowWorkflowMixin
 
 
 class Ur3SyncExtension(
     _UiWorkflowMixin,
     _TargetWorkflowMixin,
     _TrajectoryWorkflowMixin,
+    _LiveFollowWorkflowMixin,
     omni.ext.IExt,
 ):
     """載入模擬 UR3 關節目標，並將其傳送至實體 UR3。"""
 
     ACTION_NAME = "/scaled_joint_trajectory_controller/follow_joint_trajectory"
     JOINT_STATE_TOPIC = "/joint_states"
+    LIVE_FOLLOW_COMMAND_TOPIC = (
+        "/scaled_joint_trajectory_controller/joint_trajectory"
+    )
+    CONTROLLER_STATE_TOPIC = (
+        "/scaled_joint_trajectory_controller/controller_state"
+    )
+    LIVE_FOLLOW_SPEED = 0.50
+    LIVE_FOLLOW_WAYPOINT_DURATION = 0.100
+    LIVE_FOLLOW_MAX_RATE_HZ = 30.0
+    LIVE_FOLLOW_DEADBAND = 0.001
+    LIVE_FOLLOW_ARRIVAL_TOLERANCE = 0.01
+    LIVE_FOLLOW_SETTLE_DURATION = 3.0
+    LIVE_FOLLOW_FEEDBACK_TIMEOUT = 0.5
+    LIVE_FOLLOW_INITIAL_ERROR_LIMIT = 0.10
+    LIVE_FOLLOW_TRACKING_ERROR_LIMIT = 0.15
+    LIVE_FOLLOW_TRACKING_ERROR_DURATION = 0.5
 
     POSE_METHOD_NAMED_POSE = "Robot Poser Named Pose"
     POSE_METHOD_CURRENT_SIMULATION = "Current Simulation Pose"
@@ -68,6 +85,8 @@ class Ur3SyncExtension(
         self.node = None
         self.client = None
         self._joint_state_sub = None
+        self._controller_state_sub = None
+        self._live_follow_publisher = None
         self._app_update_sub = None
         self._stage_event_sub_opened = None
         self._stage_event_sub_assets_loaded = None
@@ -85,6 +104,18 @@ class Ur3SyncExtension(
         self._pending_target_label = None
         self._pending_positions = None
         self._hardware_positions = None
+        self._joint_state_received_at = None
+        self._controller_state = None
+        self._controller_state_received_at = None
+        self._live_follow_active = False
+        self._live_follow_robot_path = None
+        self._live_follow_rate_gate = None
+        self._live_follow_error_monitor = None
+        self._live_follow_settle_monitor = None
+        self._live_follow_last_published = None
+        self._live_follow_idle = False
+        self._live_follow_phase = "OFF"
+        self._updating_live_follow_mode = False
 
         self._send_future = None
         self._result_future = None
@@ -153,6 +184,11 @@ class Ur3SyncExtension(
     def _on_stage_changed(self, event):
         """Stage 變更後更新 robots 與目前 robot 的 Named Poses。"""
         del event
+        if self._live_follow_active:
+            self._stop_live_follow(
+                "Live Follow stopped automatically because the Stage changed.",
+                self.STATUS_ERROR,
+            )
         if self._is_executing:
             self._robot_refresh_pending = True
             return
@@ -166,6 +202,12 @@ class Ur3SyncExtension(
         """取消作用中的工作，並釋放介面與 ROS 資源。"""
         carb.log_info("[UR3 Sync] Extension shutting down")
         self._dismiss_warning_dialog()
+
+        if self._live_follow_active:
+            self._stop_live_follow(
+                "Live Follow stopped during extension shutdown.",
+                self.STATUS_WARN,
+            )
 
         # Best-effort cancellation reduces the risk of unmanaged motion.
         if self._goal_handle is not None:

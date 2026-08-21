@@ -62,6 +62,24 @@ class UiLayoutTests(unittest.TestCase):
             "Load and current-pose buttons must share one horizontal row",
         )
 
+    def test_live_follow_uses_one_mode_toggle(self):
+        tree = ast.parse(UI_WORKFLOW_PATH.read_text(encoding="utf-8"))
+        build_ui = next(
+            node for node in ast.walk(tree)
+            if isinstance(node, ast.FunctionDef) and node.name == "_build_ui"
+        )
+        calls = [node for node in ast.walk(build_ui) if isinstance(node, ast.Call)]
+        self.assertTrue(any(
+            isinstance(call.func, ast.Attribute)
+            and isinstance(call.func.value, ast.Name)
+            and call.func.value.id == "ui"
+            and call.func.attr == "CheckBox"
+            for call in calls
+        ))
+        assigned = _assigned_attributes(ast.walk(build_ui))
+        self.assertNotIn("start_live_follow_btn", assigned)
+        self.assertNotIn("stop_live_follow_btn", assigned)
+
 
 if __name__ == "__main__":
     unittest.main()

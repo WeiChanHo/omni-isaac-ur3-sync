@@ -8,9 +8,10 @@ import rclpy
 
 from action_msgs.msg import GoalStatus
 from control_msgs.action import FollowJointTrajectory
+from control_msgs.msg import JointTrajectoryControllerState
 from rclpy.action import ActionClient
 from sensor_msgs.msg import JointState
-from trajectory_msgs.msg import JointTrajectoryPoint
+from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
 
 class _TrajectoryWorkflowMixin:
@@ -34,6 +35,17 @@ class _TrajectoryWorkflowMixin:
                 self._on_joint_state,
                 10,
             )
+            self._controller_state_sub = self.node.create_subscription(
+                JointTrajectoryControllerState,
+                self.CONTROLLER_STATE_TOPIC,
+                self._on_controller_state,
+                10,
+            )
+            self._live_follow_publisher = self.node.create_publisher(
+                JointTrajectory,
+                self.LIVE_FOLLOW_COMMAND_TOPIC,
+                1,
+            )
             return True
         except Exception as exc:
             carb.log_error(f"[UR3 Sync] ROS 2 initialization failed: {exc}")
@@ -42,6 +54,11 @@ class _TrajectoryWorkflowMixin:
     def _on_joint_state(self, msg):
         """依控制器順序快取完整且為有限值的 UR3 關節狀態樣本。"""
         # JointState ordering is not guaranteed; normalize to controller order.
+        if (
+            len(msg.name) != len(msg.position)
+            or len(msg.name) != len(set(msg.name))
+        ):
+            return
         positions_by_name = dict(zip(msg.name, msg.position))
         if not all(name in positions_by_name for name in self.ur_joint_names):
             return
@@ -52,6 +69,7 @@ class _TrajectoryWorkflowMixin:
         ]
         if all(math.isfinite(value) for value in positions):
             self._hardware_positions = positions
+            self._joint_state_received_at = time.perf_counter()
             self._monitor_execution_stall(positions)
 
     def _on_app_update(self, event):
@@ -67,6 +85,7 @@ class _TrajectoryWorkflowMixin:
 
         if self._hardware_positions is not None:
             self._monitor_execution_stall(self._hardware_positions)
+        self._update_live_follow()
 
     def _target_error(self, positions):
         """傳回目前回授到作用中目標的最大關節誤差。"""
@@ -223,6 +242,13 @@ class _TrajectoryWorkflowMixin:
 
     def _on_execute_clicked(self):
         """檢查執行前提並送出目標。"""
+        if self._live_follow_active:
+            self._set_status(
+                "Turn Live Streaming Mode OFF before executing a trajectory "
+                "Action.",
+                self.STATUS_WARN,
+            )
+            return
         if self._is_executing:
             self._set_status(
                 "A trajectory is already executing.",
@@ -311,6 +337,8 @@ class _TrajectoryWorkflowMixin:
         self.robot_combo.enabled = False
         self.refresh_btn.enabled = False
         self.speed_slider.enabled = False
+        if getattr(self, "live_follow_mode_toggle", None) is not None:
+            self.live_follow_mode_toggle.enabled = False
         self.stop_btn.enabled = False
 
         self._set_status(
@@ -537,6 +565,8 @@ class _TrajectoryWorkflowMixin:
             self.speed_slider.enabled = True
         if getattr(self, "stop_btn", None) is not None:
             self.stop_btn.enabled = False
+        if getattr(self, "live_follow_mode_toggle", None) is not None:
+            self.live_follow_mode_toggle.enabled = True
 
         if self._robot_refresh_pending:
             self._refresh_robots_and_poses()
