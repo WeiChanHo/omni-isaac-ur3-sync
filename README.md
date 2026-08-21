@@ -272,18 +272,69 @@ A Named Pose is not required.
 For details on adjusting articulation joints, see NVIDIA's
 [Physics Inspector guide](https://docs.isaacsim.omniverse.nvidia.com/6.0.1/physics/joint_inspector.html).
 
-## 7. Quick Troubleshooting
+## 7. Troubleshooting: UI Status Error Messages
 
-| Message or symptom | What to do |
-| --- | --- |
-| No active USD stage | Open a USD stage, then select **Refresh**. |
-| No Active Robot is selected | Apply `IsaacRobotAPI` to the UR3 articulation root prim (not a child link or mesh), select **Refresh**, then select the robot. |
-| No Named Poses are listed | Save a valid pose in Robot Poser, then select **Refresh**. |
-| IK result is missing UR joints | Check that the pose contains all six UR3 joints with the expected names. |
-| Timeline must be playing | Select **Play**, wait at least one simulation frame, and capture again. |
-| No valid `/joint_states` received | Check the driver, `ROS_DOMAIN_ID`, and that all six joints are present. |
-| Action server is not ready | Confirm that `scaled_joint_trajectory_controller` is active. |
-| Goal rejected, aborted, or stalled | Inspect the UR controller and driver logs. Resolve any Protective Stop or controller fault before retrying. |
+The tables below list every message that the extension can show in red in the
+**Status** field. Text inside angle brackets, such as `<pose_name>` or
+`<exception>`, is supplied at runtime. Some messages contain additional detail
+from Isaac Sim, ROS 2, or the UR controller; match these by the fixed text at
+the beginning of the message.
+
+### 7.1 Stage, Active Robot, and Named Pose errors
+
+| UI Status error message | When it appears | How to handle it |
+| --- | --- | --- |
+| `Failed to scan Active Robots: <exception>` | The extension could not traverse the current USD stage or validate robot prims during a refresh. | Check the Isaac Sim log for the exception. Confirm that the stage and referenced assets finished loading and are readable, then reopen the stage or restart Isaac Sim and select **Refresh**. If a referenced asset is missing or corrupt, repair that reference first. |
+| `No active USD stage.` | No USD stage is open when the extension refreshes robots, loads a Named Pose, or captures the current simulation pose. | Open the required USD stage, wait for it to finish loading, then select **Refresh** and retry. |
+| `No Active Robot is selected` | A target operation was requested while **Active Robot** is `None`. | Apply `IsaacRobotAPI` to the UR3 articulation root prim, select **Refresh**, and select the correct full prim path under **Active Robot**. |
+| `Robot prim not found: <prim_path>` | The selected robot prim was deleted, renamed, or moved after it was selected. | Select **Refresh**, choose the robot at its current path, and load or capture the target again. |
+| `Selected robot is no longer a valid non-prototype IsaacRobotAPI prim. Refresh and select an Active Robot again` | The selected prim no longer has a valid `IsaacRobotAPI`, or it is now inside a USD prototype. | Apply `IsaacRobotAPI` to a non-prototype articulation root prim, select **Refresh**, and select that robot again. Do not select a child link, joint, mesh, or instance proxy. |
+| `Failed to scan Robot Poser named poses for <prim_path>: <exception>` | Robot Poser failed while listing Named Poses for the selected robot. | Verify that the selected prim is the intended Robot Poser robot and that its Robot Poser data is valid. Check the Isaac Sim log for the exception, recreate damaged pose data if necessary, then select **Refresh**. |
+| `No Robot Poser named pose is selected.` | **Load and Validate IK Solution** was selected when the pose list was empty or had no valid selection. | Create and save a successful Named Pose for the selected robot in Robot Poser, select **Refresh**, select the pose, and try again. |
+| `Named pose not found: <pose_name>` | The selected pose was deleted or renamed after the pose list was populated. | Select **Refresh**, then select and load an existing Named Pose. |
+| `Named pose has an invalid IK result: <pose_name>` | Robot Poser saved the Named Pose without a successful IK solution. | Return to Robot Poser, correct the target or robot configuration until IK succeeds, save the pose again, select **Refresh**, and reload it. |
+| `IK result is missing UR joints: <joint_names>` | The Named Pose does not contain values for all six controller joints. | Confirm that Robot Poser uses the same UR3 articulation and that its result contains `shoulder_pan_joint`, `shoulder_lift_joint`, `elbow_joint`, `wrist_1_joint`, `wrist_2_joint`, and `wrist_3_joint`. Re-solve and save the pose. |
+| `IK result contains NaN or infinite values` | At least one Named Pose joint value is not finite. | Do not execute the target. Re-solve the pose in Robot Poser; inspect the articulation, joint limits, and solver setup if the invalid value returns. |
+
+### 7.2 Current simulation pose errors
+
+| UI Status error message | When it appears | How to handle it |
+| --- | --- | --- |
+| `Start the Isaac Sim Timeline before capturing the current simulation pose` | **Get Current Simulation Pose** was selected while the Timeline was stopped. | Select **Play**, wait for the simulation to start, and capture again. |
+| `The planning articulation is not ready. Keep the Timeline playing, wait one simulation frame, and try Get Current again` | The selected articulation does not yet have a valid PhysX tensor entity, commonly immediately after starting the Timeline or loading the stage. | Keep the Timeline playing, wait at least one simulation frame, confirm that the selected prim is a valid articulation, and retry. If it persists, stop and restart the Timeline or reopen the stage. |
+| `Simulation articulation returned an unexpected joint position row count: <count>` | Isaac Sim returned zero or multiple articulation rows instead of the single selected robot row. | Stop physical execution. Confirm that **Active Robot** points to one UR3 articulation root, restart the Timeline, and capture again. If it persists, inspect the articulation view and Isaac Sim log for an invalid or duplicated selection. |
+| `Simulation articulation returned mismatched DOF names and positions: <name_count> names, <position_count> positions` | Isaac Sim returned a different number of DOF names and joint values. | Stop physical execution, restart the Timeline, and retry. If it persists, verify the USD articulation/joints and check the Isaac Sim log; the articulation data is inconsistent and must be repaired before capture. |
+| `Simulation articulation returned duplicate DOF names` | The selected articulation reports the same DOF name more than once. | Correct the USD joint names so every DOF name is unique, reload the stage, select **Refresh**, and capture again. |
+| `Simulation articulation is missing UR joints: <joint_names>` | The selected articulation does not expose all six expected UR3 joints. | Select the correct UR3 articulation root. If it is the intended robot, rename or repair its joints to match the six controller joint names listed in section 7.1, reload the stage, and retry. |
+| `Current simulation pose contains NaN or infinite values` | At least one live simulated joint position is not finite. | Do not execute the target. Stop the Timeline, inspect the physics scene, articulation, drives, and joint limits for instability, reset the simulation, and capture only after all six values are finite. |
+
+The stage and robot selection errors from section 7.1 can also appear while
+capturing the current simulation pose.
+
+### 7.3 Execution and trajectory result errors
+
+| UI Status error message | When it appears | How to handle it |
+| --- | --- | --- |
+| `Load a named pose or capture the current simulation pose first.` | **Execute on Physical UR3** was selected without a currently validated target, or the previous target was invalidated by a robot/pose change or refresh. | Load and validate a Named Pose or capture the current simulation pose again. Review all six joint values before execution. |
+| `No valid /joint_states received from the physical UR3. Execution is blocked.` | No complete, finite six-joint sample has been received on `/joint_states`. | Confirm that the UR driver is running, Isaac Sim and the driver use the same ROS 2 environment and `ROS_DOMAIN_ID`, and `/joint_states` contains all six expected joint names with finite positions. Test with `ros2 topic echo /joint_states`. |
+| `Action server is not ready: /scaled_joint_trajectory_controller/follow_joint_trajectory` | The trajectory action server is unavailable before or immediately after execution begins. | Check `ros2 action list`, confirm `scaled_joint_trajectory_controller` is loaded and active, and resolve driver/controller startup errors. Retry with UR mock hardware first. |
+| `Failed to send trajectory goal: <exception>` | `send_goal_async` raised before the goal request could be completed. | Treat the robot state as uncertain until verified. Check ROS connectivity, driver/controller status, and the Isaac Sim log, then restore the action server and retry with mock hardware. |
+| `Trajectory goal request failed: <exception>` | The asynchronous goal request completed with a ROS 2 communication or action-client exception. | Check whether the driver or action server stopped or restarted, verify ROS discovery and `ROS_DOMAIN_ID`, and inspect driver and Isaac Sim logs. Reconnect and retry with mock hardware. |
+| `Trajectory goal was rejected by the UR controller.` | The action server responded but did not accept the goal. | Inspect the UR driver/controller log for the rejection reason. Confirm that the controller is active, the robot is in External Control and remote mode as required, joint names are correct, and no Protective Stop or fault is active. |
+| `Failed to receive trajectory result: <exception>` | The goal was accepted, but its final action result could not be read. The physical robot state is therefore uncertain. | Keep the workspace clear and inspect the physical robot and UR controller immediately. Use the physical emergency stop if the robot is still moving. Restore ROS/controller communication and determine the actual robot state before sending another goal. |
+| `Possible collision or motion stall detected. Cancelling the trajectory goal...` | After the startup grace period, joint feedback showed no meaningful motion for the stall timeout while the target remained outside tolerance. Possible causes include a collision, Protective Stop, paused speed slider, or controller fault. | Keep the workspace clear and inspect the UR teach pendant/controller. Use the physical emergency stop if the robot is still moving. Resolve the collision, Protective Stop, speed-slider pause, External Control issue, or controller fault before retrying. |
+| `Motion stall detected, but goal cancellation failed: <exception>. Use the emergency stop if necessary.` | The watchdog detected a stall, then the local call that requests cancellation raised an exception. | Assume the goal may still be active. Use the physical emergency stop if needed, inspect the robot and controller, restore ROS/action communication, and do not retry until the robot state is known. |
+| `Controller acknowledged the automatic cancellation after a suspected stall. Waiting for the final cancelled result.` | The controller accepted the watchdog's automatic cancellation request, but the final action result has not arrived yet. | Continue monitoring the physical robot; an acknowledged cancel is not an emergency stop. Wait for the final result and inspect/reset the UR controller before another motion. Use the physical emergency stop if motion continues unexpectedly. |
+| `Target '<target_label>' was cancelled after a suspected motion stall. No meaningful joint motion was detected for <seconds> s while the maximum remaining error was <radians> rad.` | The final result confirms cancellation after watchdog stall detection. | Inspect the workspace, teach pendant, speed slider, and controller logs. Clear and reset the underlying collision, Protective Stop, pause, or fault, then validate the complete workflow with mock hardware before another physical check. |
+| `Trajectory failed: status=<status>, error_code=<error_code>, message=<controller_message>[. Maximum remaining joint error: <radians> rad]` | The action did not finish with both ROS goal status `SUCCEEDED` and controller result `SUCCESSFUL`. The optional remaining-error text appears when joint feedback is available. | Use `status`, `error_code`, and `controller_message` to diagnose the controller result. Inspect the UR pendant and driver logs, resolve collisions, Protective Stops, tolerance/path errors, invalid goals, or controller faults, and do not execute again until resolved. |
+
+### 7.4 Goal cancellation errors
+
+| UI Status error message | When it appears | How to handle it |
+| --- | --- | --- |
+| `Failed to request goal cancellation: <exception>` | Selecting **Cancel Goal** caused the local cancellation call to raise before a response was received. | Assume the robot may continue moving. Use the physical emergency stop if necessary, then check ROS/action connectivity and the UR controller before retrying. |
+| `Cancel request failed: <exception>` | The cancellation request was sent, but its asynchronous response failed. | Assume the cancellation status is unknown. Observe the robot from a safe position, use the physical emergency stop if necessary, and inspect ROS/controller connectivity and logs. |
+| `Controller did not accept the cancel request. The robot may still be moving; use the emergency stop if necessary.` | The controller returned a cancellation response with no goals being cancelled. The goal may already be final or may still be executing. | Check the physical robot and action/controller state immediately. If motion must stop, use the physical emergency stop; do not repeatedly rely on **Cancel Goal**. Determine the final goal state before another command. |
 
 If the physical robot moves unexpectedly, use the physical safety stop defined
 by your laboratory procedure. Do not rely on **Cancel Goal** as an emergency
