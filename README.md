@@ -46,12 +46,16 @@ flowchart TD
     subgraph Target["Target acquisition"]
         Refresh --> Discover["_discover_robot_paths(stage)<br/>-> robot_paths"]
         Discover --> Resolve["resolve_robot_selection(<br/>robot_paths, previous_path, prefer_default, default_path)<br/>-> sorted_paths, selected_path"]
-        Resolve --> Poses["_refresh_pose_names()<br/>selected_robot_path -> pose_names"]
+        Resolve --> SelectRobot["Select Active Robot<br/>_on_robot_selection_changed()<br/>-> selected_robot_path"]
+        SelectRobot --> Poses["_refresh_pose_names()<br/>selected_robot_path -> pose_names"]
 
-        LoadClick["_on_load_clicked()"] --> PoseName["_get_selected_pose_name()<br/>-> pose_name"]
+        Poses --> SelectPose["Select Named Pose"]
+        SelectPose --> LoadClick["_on_load_clicked()"]
+        LoadClick --> PoseName["_get_selected_pose_name()<br/>-> pose_name"]
         PoseName --> LoadPose["_load_named_pose_positions(pose_name)<br/>-> positions[6]"]
 
-        CurrentClick["_on_get_current_clicked()"] --> ReadSim["_read_current_simulation_positions()<br/>-> dof_names, position_rows"]
+        SelectRobot --> CurrentClick["_on_get_current_clicked()"]
+        CurrentClick --> ReadSim["_read_current_simulation_positions()<br/>-> dof_names, position_rows"]
         ReadSim --> Normalize["normalize_joint_positions(<br/>dof_names, position_rows, ur_joint_names)<br/>-> positions[6] in controller order"]
 
         LoadPose --> Pending["_set_pending_target(method, label, positions)<br/>-> pending target snapshot"]
@@ -83,8 +87,7 @@ flowchart TD
         CancelResponse -. "final result arrives separately" .-> Result
     end
 
-    BuildUI --> LoadClick
-    BuildUI --> CurrentClick
+    BuildUI -. "bind selection callbacks" .-> SelectRobot
     BuildUI --> ExecuteClick
     BuildUI --> CancelClick
     RosInit --> AppUpdate
