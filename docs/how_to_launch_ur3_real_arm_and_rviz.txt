@@ -1,0 +1,48 @@
+[操作手冊］
+🌟UR3 的touch pad 
+
+power on
+Shell 輸入exit to skip startup.nsh 
+
+Initialize 
+Power on
+Start
+Normal robot
+
+直接操作：
+Run Program
+Move :
+1. TCP position
+2. TCP orientation 
+3. Home: auto ：ok: 回到正位
+4. Free drive按著：手動調整手臂位置
+
+Sim2Real/ Real2Sim:
+Program robot
+Empty Program
+Empty
+Structure 
+URCaps
+External Control
+按play
+
+🌟Ubuntu:
+
+1.
+source /opt/ros/humble/setup.bash
+
+ros2 launch ur_robot_driver ur_control.launch.py ur_type:=ur3 robot_ip:=192.168.56.101 launch_rviz:=false
+
+2.
+source /opt/ros/humble/setup.bash
+
+ros2 launch ur_moveit_config ur_moveit.launch.py ur_type:=ur3 launch_rviz:=true
+
+
+🌟UR3 touch pad:
+
+按play
+
+🌟 Rviz:
+Plan模擬一次
+Execute 手臂實體執行
