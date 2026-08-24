@@ -62,8 +62,8 @@ UR3 控制器的 IP 位址為 `192.168.56.101`。設定完成後，確認兩端�
 ## 3. 安裝 ROS 2 Jazzy
 
 依照官方 **ROS 2 Jazzy Ubuntu (deb packages)** 文件完成安裝，
-[ROS 2 Jazzy Ubuntu (deb packages)_system-setup](https://docs.ros.org/en/jazzy/Installation/Ubuntu-Install-Debs.html#system-setup)
-[ROS 2 Jazzy Ubuntu (deb packages)_install-ros-2](https://docs.ros.org/en/jazzy/Installation/Ubuntu-Install-Debs.html#install-ros-2)
+- [ROS 2 Jazzy Ubuntu (deb packages)_system-setup](https://docs.ros.org/en/jazzy/Installation/Ubuntu-Install-Debs.html#system-setup)
+- [ROS 2 Jazzy Ubuntu (deb packages)_install-ros-2](https://docs.ros.org/en/jazzy/Installation/Ubuntu-Install-Debs.html#install-ros-2)
 
 之後執行：
 
