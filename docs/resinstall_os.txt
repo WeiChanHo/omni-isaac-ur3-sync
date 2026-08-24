@@ -1,0 +1,49 @@
+電腦重灌成 ubuntu 24.04  
+我們從零開始
+
+gpu : rtx 6000 quadro
+
+
+sudo apt-get update  
+
+nvidia-smi 
+
+sudo apt install nvidia-utils-580  
+
+check the driver is correct version or not 
+addtional driver ->  nvidia-driver-580
+
+nvidia-settings:
+turn on the performance mode
+
+set up the ip address : 192.168.56.1
+
+ros2 installation: Ubuntu (deb packages) - Jazzy documentation
+
+universal robot ros2 driver(jazzy) installation  https://github.com/UniversalRobots/Universal_Robots_ROS2_Driver/tree/jazzy
+follow its readme
+
+sudo apt install git -y
+
+setup ur3 arm
+https://docs.universal-robots.com/Universal_Robots_ROS2_Documentation/doc/ur_client_library/doc/installation.html
+ur_client_library
+ur_description
+ur_robot_driver
+
+install isaac sim 6.0.1: Linux x86_64
+
+Extract isaacsim zip to Home/
+
+rename it to “isaacsim/”
+
+$ ./post_install.sh
+
+
+$./isaac-sim.sh
+in isaac sim:
+windows ->extension -> check ros2 相關套件是否都有安裝跟開啟
+
+“rclpy loaded”!!!!!!! 
+
+
