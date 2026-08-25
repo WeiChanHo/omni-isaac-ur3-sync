@@ -1,5 +1,9 @@
 # UR3 Sync Extension User Guide
 
+- [Named_Pose.webm](https://github.com/user-attachments/assets/171877bf-b8fe-495d-86fb-63f37be70ceb)
+- [Get_Current.webm](https://github.com/user-attachments/assets/f787b521-ac3f-4f4f-9db7-109357cd3e7e)
+- [live_streaming_demo.webm](https://github.com/user-attachments/assets/73500504-c9f6-4b1c-a600-891f55dc0744)
+
 ## 1. Overview
 
 The **UR3 Robot Poser Executor** extension sends a validated six-joint target
