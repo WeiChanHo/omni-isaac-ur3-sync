@@ -299,64 +299,49 @@ For details on adjusting articulation joints, see NVIDIA's
 
 ## 6.5 Live Streaming Mode
 
-Live Streaming Mode uses the active `scaled_joint_trajectory_controller`; it
-does not switch to `forward_position_controller` and does not repeatedly
-submit Action goals. Each message on
-`/scaled_joint_trajectory_controller/joint_trajectory` contains all six joints
-in controller order and one waypoint at `0.100 s`. Commands use a fixed
-`0.50 rad/s` limit and a maximum 30 Hz update rate, so each joint advances by
-at most `0.050 rad` from the latest controller reference per command. The rate
-is an upper bound: a slow Isaac App Update loop reduces it without catch-up
-bursts.
+<p align="center">
+  <img src="docs/7.1.png" alt="Live Streaming Mode On" width="700">
+</p>
 
-Before turning **Live Streaming Mode** ON, ensure the Timeline is playing, the
-correct Active Robot is selected, no trajectory Action is executing, and the
-mock-hardware controller is active. Both `/joint_states` and
-`/scaled_joint_trajectory_controller/controller_state` must have delivered a
-complete, finite sample within `0.5 s`, the command topic must have a
-subscriber, and simulation-to-hardware error must be no more than `0.10 rad`
-on every joint. If alignment is rejected, use the normal **Execute on Physical
-UR3** workflow to align first. A failed start returns the toggle to OFF.
+Live Streaming Mode continuously follows the current Isaac Sim joint pose on
+the physical UR3. It keeps `scaled_joint_trajectory_controller` active and
+publishes one `0.100 s` waypoint at a fixed `0.50 rad/s`, up to maximum 30 Hz,
+on `/scaled_joint_trajectory_controller/joint_trajectory`. Each command moves
+at most `0.050 rad` per joint from the latest controller reference.
 
-When all hardware joints are within `0.01 rad` of a simulation target and that
-target remains unchanged within a `0.001 rad` per-joint deadband for `3.0 s`,
-the mode enters IDLE. It publishes one `0.100 s` hold from fresh hardware
-feedback and then pauses trajectory publishing to avoid repeated command
-replacement and visible jitter. The mode remains ON and continues monitoring.
-If the simulation target moves by at least `0.001 rad`, or hardware leaves the
-arrival tolerance, the mode returns to ACTIVE automatically.
+### Enable Live Streaming
 
-While active, pose loading/capture, Execute, robot selection, and Refresh are
-disabled. Status distinguishes OFF, ACTIVE, SETTLING, IDLE, and ERROR.
+1. Start the Timeline and select the correct **Active Robot**.
+2. Select **Get Current Simulation Pose**, then **Execute on Physical UR3** to
+   align the real robot with the simulation.
+3. Confirm that `/joint_states` and
+   `/scaled_joint_trajectory_controller/controller_state` are valid and less
+   than `0.5 s` old, and that the command topic has a subscriber.
+4. Turn **Live Streaming Mode** ON. Startup is blocked if an Action goal is
+   active or any joint differs by more than `0.10 rad`.
 
-### Conditions that turn Live Streaming Mode OFF
+While enabled, loading/capturing poses, Execute, robot selection, Refresh, and
+the speed slider are disabled. The Status field shows:
 
-The toggle returns to OFF under any of these conditions:
+- **ACTIVE** — following the simulation target;
+- **SETTLING** — within `0.01 rad`, waiting for the target to remain unchanged;
+- **IDLE** — aligned and unchanged for `3.0 s`; one hardware-feedback hold is
+  sent and publishing pauses until the target moves by `0.001 rad`; or
+- **ERROR/OFF** — streaming stopped and a hold was attempted.
 
-- the operator turns it OFF;
-- the Timeline stops;
-- the Stage changes;
-- the Active Robot changes;
-- the robot, articulation, or simulation joint data becomes invalid;
-- stale `/joint_states` exceeds `0.5 s`;
-- stale controller state exceeds `0.5 s`;
-- tracking error exceeds `0.15 rad` continuously for `0.5 s`;
-- a read or publish exception occurs; or
-- extension shutdown begins.
-
-Every OFF or fault path publishes a `0.100 s` hold from fresh `/joint_states`.
-If that feedback is stale, no hold is sent and status reports **robot state
-uncertain**. A running trajectory Action, invalid selection or articulation,
-stopped Timeline, stale or malformed startup feedback, no command subscriber,
-or initial alignment error above `0.10 rad` blocks the mode from turning ON
-rather than disconnecting an already active mode.
+The mode turns OFF if the Timeline stops, the Stage changes, Active Robot changes,
+stale `/joint_states` or stale controller state exceeds `0.5 s`,
+tracking error exceeds `0.15 rad` for `0.5 s`, a read or publish exception
+occurs, or extension shutdown begins. If fresh hardware feedback is
+unavailable, no hold is sent and the robot state is uncertain. See section 7.5
+for the corresponding Status errors and recovery steps.
 
 > [!CAUTION]
-> Live Streaming Mode is fire-and-forget topic control and has no Action
-> result. **Turning Live Streaming Mode OFF is not an emergency stop.** Keep
-> the physical emergency stop accessible and do not proceed to a physical test
-> until maximum 30 Hz operation, limiting, IDLE/resume, tracking error, and
-> hold behavior pass on mock hardware.
+> Live Streaming Mode uses fire-and-forget topic commands and has no Action
+> result. Turning it OFF or sending a hold is not an emergency stop. Keep the
+> physical emergency stop accessible and validate the full workflow with UR
+> mock hardware before operating a physical robot.
+
 
 ## 7. Troubleshooting: UI Status Error Messages
 
