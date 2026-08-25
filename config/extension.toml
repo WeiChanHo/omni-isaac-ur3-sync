@@ -2,7 +2,7 @@
 name = "omni.isaac.ur3_sync"
 title = "UR3 Robot Poser Executor"
 description = "Captures or loads Isaac Sim UR3 joint targets before executing them on a physical UR3 through ROS 2"
-version = "1.5.0"
+version = "1.1.0"
 category = "Robotics"
 keywords = ["isaacsim", "robotics", "ros2", "ur3"]
 
